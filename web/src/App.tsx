@@ -6,6 +6,7 @@ import { MessagesPagination } from "./components/MessagesPagination";
 import { MessageDetailModal } from "./components/MessageDetailModal";
 import { Button } from "./components/ui/button";
 import { Play, Pause } from "lucide-react";
+import { invoke } from '@tauri-apps/api/core';
 
 // Мок данные для демонстрации
 const generateMockMessages = (page: number, pageSize: number = 10, messageType: string = 'json') => {
@@ -61,13 +62,34 @@ export default function App() {
     setMessages(generateMockMessages(page, 10, messageType));
   };
 
-  const handleConfigurationSave = (config: any) => {
-    console.log('Configuration saved:', config);
-    setCurrentConfig(config);
-    setIsConnected(true);
-    // Генерируем новые сообщения с учетом типа
-    setMessages(generateMockMessages(1, 10, config.messageType));
-    setCurrentPage(1);
+
+  const handleConfigurationSave = async (config: any) => {
+    console.log('Configuration saved (UI will try to configure backend):', config);
+    // Transform to backend snake_case
+    const payload = {
+      broker: config.broker,
+      topic: config.topic,
+      ssl_enabled: config.sslEnabled,
+      ssl_cert_path: config.sslCertPath || null,
+      ssl_key_path: config.sslKeyPath || null,
+      ssl_ca_path: config.sslCaPath || null,
+      message_type: config.messageType,
+      partition: config.partition,
+      offset_type: config.offsetType,
+      start_offset: config.startOffset,
+      proto_schema_path: config.protoSchemaPath || null,
+    };
+
+    try {
+      await invoke('set_kafka_config', { config: payload });
+      setCurrentConfig(config);
+      setIsConnected(true);
+      setMessages(generateMockMessages(1, 10, config.messageType));
+      setCurrentPage(1);
+    } catch (e) {
+      console.error('Failed to configure Kafka backend:', e);
+      setIsConnected(false);
+    }
   };
 
   const handleFilterChange = (filters: any) => {

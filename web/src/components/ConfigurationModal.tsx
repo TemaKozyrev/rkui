@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { invoke } from '@tauri-apps/api/core';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -17,7 +18,7 @@ interface ConfigurationData {
   sslKeyPath?: string;
   sslCaPath?: string;
   messageType: 'json' | 'text' | 'protobuf';
-  protoSchema?: File;
+  protoSchemaPath?: string;
   partition: string;
   offsetType: string;
   startOffset: number;
@@ -38,11 +39,21 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     offsetType: 'latest',
     startOffset: 0
   });
+  const [topics, setTopics] = useState<string[]>([]);
+  const [topicsBroker, setTopicsBroker] = useState<string | null>(null);
+  const [isFetchingTopics, setIsFetchingTopics] = useState(false);
+  const [topicsError, setTopicsError] = useState<string | null>(null);
+  const [topicFocused, setTopicFocused] = useState(false);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setConfig(prev => ({ ...prev, protoSchema: file }));
+  const handlePickProtoFile = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({ filters: [{ name: 'Proto', extensions: ['proto'] }], multiple: false });
+      if (typeof selected === 'string') {
+        setConfig(prev => ({ ...prev, protoSchemaPath: selected }));
+      }
+    } catch (e) {
+      console.error('Failed to pick proto file', e);
     }
   };
 
@@ -50,6 +61,51 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     onConfigurationSave(config);
     setOpen(false);
   };
+
+  const toBackendConfig = (c: ConfigurationData) => ({
+    broker: c.broker,
+    topic: c.topic,
+    ssl_enabled: c.sslEnabled,
+    ssl_cert_path: c.sslCertPath || null,
+    ssl_key_path: c.sslKeyPath || null,
+    ssl_ca_path: c.sslCaPath || null,
+    message_type: c.messageType,
+    partition: c.partition,
+    offset_type: c.offsetType,
+    start_offset: c.startOffset,
+    proto_schema_path: c.protoSchemaPath || null,
+  });
+
+  const fetchTopicsForBroker = async (broker: string) => {
+    const trimmed = broker.trim();
+    if (!trimmed) return;
+    if (topicsBroker === trimmed) return; // already fetched for this broker
+    try {
+      setIsFetchingTopics(true);
+      setTopicsError(null);
+      const payload = toBackendConfig({ ...config, broker: trimmed });
+      const list = await invoke<string[]>("get_topics", { config: payload });
+      setTopics(list || []);
+      setTopicsBroker(trimmed);
+    } catch (e: any) {
+      console.error("Failed to fetch topics:", e);
+      setTopics([]);
+      setTopicsError(typeof e === 'string' ? e : (e?.toString?.() || 'Failed to fetch topics'));
+      setTopicsBroker(null);
+    } finally {
+      setIsFetchingTopics(false);
+    }
+  };
+
+  const handleBrokerBlur = () => {
+    void fetchTopicsForBroker(config.broker);
+  };
+
+  const filteredTopics = useMemo(() => {
+    const q = (config.topic || '').toLowerCase();
+    if (!q) return topics;
+    return topics.filter(t => t.toLowerCase().includes(q));
+  }, [config.topic, topics]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -82,18 +138,55 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                   <Input
                     id="broker"
                     value={config.broker}
-                    onChange={(e) => setConfig(prev => ({ ...prev, broker: e.target.value }))}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setConfig(prev => ({ ...prev, broker: val }));
+                      if (topicsBroker && val !== topicsBroker) {
+                        setTopics([]);
+                        setTopicsBroker(null);
+                        setTopicsError(null);
+                      }
+                    }}
+                    onBlur={handleBrokerBlur}
                     placeholder="localhost:9092"
                   />
                 </div>
-                <div>
+                <div className="relative">
                   <Label htmlFor="topic">Topic</Label>
                   <Input
                     id="topic"
                     value={config.topic}
+                    onFocus={() => setTopicFocused(true)}
+                    onBlur={() => setTimeout(() => setTopicFocused(false), 100)}
                     onChange={(e) => setConfig(prev => ({ ...prev, topic: e.target.value }))}
                     placeholder="my-topic"
+                    autoComplete="off"
                   />
+                  {(topicFocused && (isFetchingTopics || topicsError || topics.length > 0)) && (
+                    <div className="absolute z-50 mt-1 w-full max-h-60 overflow-auto rounded-md border bg-background shadow-md">
+                      {isFetchingTopics && (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">Loading topics…</div>
+                      )}
+                      {!isFetchingTopics && topicsError && (
+                        <div className="px-3 py-2 text-sm text-destructive">{topicsError}</div>
+                      )}
+                      {!isFetchingTopics && !topicsError && filteredTopics.map((t) => (
+                        <div
+                          key={t}
+                          className="px-3 py-2 cursor-pointer hover:bg-accent hover:text-accent-foreground text-sm"
+                          onMouseDown={() => {
+                            setConfig(prev => ({ ...prev, topic: t }));
+                            setTopicFocused(false);
+                          }}
+                        >
+                          {t}
+                        </div>
+                      ))}
+                      {!isFetchingTopics && !topicsError && filteredTopics.length === 0 && (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">No matching topics</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -109,7 +202,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                   <Switch
                     id="ssl-enabled"
                     checked={config.sslEnabled}
-                    onCheckedChange={(checked) => setConfig(prev => ({ ...prev, sslEnabled: checked }))}
+                    onCheckedChange={(checked: boolean) => setConfig(prev => ({ ...prev, sslEnabled: checked }))}
                   />
                   <Label htmlFor="ssl-enabled">Enable SSL</Label>
                 </div>
@@ -176,27 +269,20 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                 
                 {config.messageType === 'protobuf' && (
                   <div>
-                    <Label htmlFor="proto-schema">Proto Schema File</Label>
+                    <Label>Proto Schema File</Label>
                     <div className="flex items-center gap-2">
-                      <Input
-                        id="proto-schema"
-                        type="file"
-                        accept=".proto"
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
                       <Button
                         variant="outline"
-                        onClick={() => document.getElementById('proto-schema')?.click()}
+                        onClick={handlePickProtoFile}
                         className="gap-2"
                       >
                         <Upload className="h-4 w-4" />
-                        Upload .proto file
+                        Select .proto file
                       </Button>
-                      {config.protoSchema && (
+                      {config.protoSchemaPath && (
                         <div className="flex items-center gap-1 text-sm text-muted-foreground">
                           <FileText className="h-4 w-4" />
-                          {config.protoSchema.name}
+                          {config.protoSchemaPath}
                         </div>
                       )}
                     </div>
@@ -207,7 +293,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                   <Label htmlFor="partition">Partition</Label>
                   <Select
                     value={config.partition}
-                    onValueChange={(value) => setConfig(prev => ({ ...prev, partition: value }))}
+                    onValueChange={(value: string) => setConfig(prev => ({ ...prev, partition: value }))}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select partition" />
@@ -226,7 +312,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                     <Label htmlFor="offset-type">Offset Type</Label>
                     <Select
                       value={config.offsetType}
-                      onValueChange={(value) => setConfig(prev => ({ ...prev, offsetType: value }))}
+                      onValueChange={(value: string) => setConfig(prev => ({ ...prev, offsetType: value }))}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Offset type" />
