@@ -11,12 +11,17 @@ interface KafkaMessage {
   timestamp: string;
 }
 
+import { Loader2 } from "lucide-react";
+
 interface MessagesTableProps {
   messages: KafkaMessage[];
   onMessageClick?: (message: KafkaMessage) => void;
+  loading?: boolean;
 }
 
-export function MessagesTable({ messages, onMessageClick }: MessagesTableProps) {
+export function MessagesTable({ messages, onMessageClick, loading = false }: MessagesTableProps) {
+  const showLoader = loading && messages.length === 0;
+
   return (
     <Card className="flex-1">
       <CardHeader>
@@ -28,46 +33,55 @@ export function MessagesTable({ messages, onMessageClick }: MessagesTableProps) 
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="border rounded-md">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead className="w-20">Partition</TableHead>
-                <TableHead className="w-32">Key</TableHead>
-                <TableHead className="w-24">Offset</TableHead>
-                <TableHead className="w-32">Timestamp</TableHead>
-                <TableHead>Message</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {messages.map((message) => (
-                <TableRow 
-                  key={message.id} 
-                  className="hover:bg-muted/30 cursor-pointer transition-colors"
-                  onClick={() => onMessageClick?.(message)}
-                >
-                  <TableCell>
-                    <Badge variant="outline">{message.partition}</Badge>
-                  </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {message.key}
-                  </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {message.offset}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {message.timestamp}
-                  </TableCell>
-                  <TableCell>
-                    <div className="max-w-md truncate font-mono text-sm">
-                      {message.message}
-                    </div>
-                  </TableCell>
+        {showLoader ? (
+          <div className="h-64 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-3 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin" />
+              <span className="text-sm">Loading messages...</span>
+            </div>
+          </div>
+        ) : (
+          <div className="border rounded-md">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50">
+                  <TableHead className="w-20">Partition</TableHead>
+                  <TableHead className="w-32">Key</TableHead>
+                  <TableHead className="w-24">Offset</TableHead>
+                  <TableHead className="w-32">Timestamp</TableHead>
+                  <TableHead>Message</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {messages.map((message) => (
+                  <TableRow 
+                    key={message.id} 
+                    className="hover:bg-muted/30 cursor-pointer transition-colors"
+                    onClick={() => onMessageClick?.(message)}
+                  >
+                    <TableCell>
+                      <Badge variant="outline">{message.partition}</Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {message.key}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {message.offset}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {message.timestamp}
+                    </TableCell>
+                    <TableCell>
+                      <div className="max-w-md truncate font-mono text-sm">
+                        {message.message}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

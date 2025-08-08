@@ -8,60 +8,61 @@ import { Button } from "./components/ui/button";
 import { Play, Pause } from "lucide-react";
 import { invoke } from '@tauri-apps/api/core';
 
-// Мок данные для демонстрации
-const generateMockMessages = (page: number, pageSize: number = 10, messageType: string = 'json') => {
-  const messages = [];
-  const startIndex = (page - 1) * pageSize;
-  
-  for (let i = 0; i < pageSize; i++) {
-    const messageIndex = startIndex + i;
-    let messageContent = '';
-    
-    switch (messageType) {
-      case 'json':
-        messageContent = JSON.stringify({
-          event: ['login', 'logout', 'purchase', 'view_product'][Math.floor(Math.random() * 4)],
-          userId: Math.floor(Math.random() * 10000),
-          timestamp: new Date().toISOString(),
-          data: { sessionId: `sess-${Math.floor(Math.random() * 1000)}` }
-        });
-        break;
-      case 'text':
-        messageContent = `User ${Math.floor(Math.random() * 1000)} performed action at ${new Date().toISOString()}`;
-        break;
-      case 'protobuf':
-        messageContent = `[binary protobuf data - ${Math.floor(Math.random() * 1000)} bytes]`;
-        break;
-    }
-    
-    messages.push({
-      id: `msg-${messageIndex}`,
-      partition: Math.floor(Math.random() * 3),
-      key: `user-${Math.floor(Math.random() * 1000)}`,
-      offset: 1000 + messageIndex,
-      message: messageContent,
-      timestamp: new Date(Date.now() - Math.random() * 86400000).toLocaleString()
-    });
-  }
-  
-  return messages;
+type KafkaMessage = {
+  id: string;
+  partition: number;
+  key: string;
+  offset: number;
+  message: string;
+  timestamp: string;
 };
+
+const PAGE_SIZE = 20;
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
-  const [messages, setMessages] = useState(() => generateMockMessages(1));
+  const [buffer, setBuffer] = useState<KafkaMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [currentConfig, setCurrentConfig] = useState<any>(null);
   const [selectedMessage, setSelectedMessage] = useState<any>(null);
   const [messageDetailOpen, setMessageDetailOpen] = useState(false);
-  const totalPages = 50; // Симуляция большого количества страниц
+  const [isLoading, setIsLoading] = useState(false);
+  const [partitions, setPartitions] = useState<number[]>([]);
+  const [appliedFilters, setAppliedFilters] = useState<{ partition: string; startOffset: number }>({
+    partition: 'all',
+    startOffset: 0,
+  });
+  const [pendingFilters, setPendingFilters] = useState<{ partition: string; startOffset: number }>({
+    partition: 'all',
+    startOffset: 0,
+  });
 
-  const handlePageChange = (page: number) => {
-    setCurrentPage(page);
-    const messageType = currentConfig?.messageType || 'json';
-    setMessages(generateMockMessages(page, 10, messageType));
+  const totalPages = Math.max(1, Math.ceil(buffer.length / PAGE_SIZE));
+  const pageMessages = buffer.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  const fetchNextBatch = async () => {
+    setIsLoading(true);
+    try {
+      const next: KafkaMessage[] = await invoke('consume_next_messages', { limit: 200 });
+      if (Array.isArray(next) && next.length > 0) {
+        setBuffer(prev => [...prev, ...next]);
+      }
+    } catch (e) {
+      console.error('Failed to fetch messages:', e);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
+  const handlePageChange = async (page: number) => {
+    setCurrentPage(page);
+    // If navigating to the last page and it is full, prefetch next 150
+    const isLastPage = page === Math.max(1, Math.ceil(buffer.length / PAGE_SIZE));
+    const thisPageLen = buffer.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).length;
+    if (isLastPage && thisPageLen === PAGE_SIZE) {
+      fetchNextBatch();
+    }
+  };
 
   const handleConfigurationSave = async (config: any) => {
     console.log('Configuration saved (UI will try to configure backend):', config);
@@ -74,32 +75,60 @@ export default function App() {
       ssl_key_path: config.sslKeyPath || null,
       ssl_ca_path: config.sslCaPath || null,
       message_type: config.messageType,
-      partition: config.partition,
-      offset_type: config.offsetType,
-      start_offset: config.startOffset,
       proto_schema_path: config.protoSchemaPath || null,
     };
 
     try {
       await invoke('set_kafka_config', { config: payload });
+      // Fetch partitions for this topic
+      try {
+        const parts: number[] = await invoke('get_topic_partitions', { config: payload });
+        setPartitions(parts || []);
+      } catch (e) {
+        console.warn('Failed to fetch partitions for topic', e);
+        setPartitions([]);
+      }
       setCurrentConfig(config);
       setIsConnected(true);
-      setMessages(generateMockMessages(1, 10, config.messageType));
+      setBuffer([]);
       setCurrentPage(1);
+      // Reset filters to defaults on new configuration
+      const defaults = { partition: 'all', startOffset: 0 };
+      setAppliedFilters(defaults);
+      setPendingFilters(defaults);
+      await fetchNextBatch();
     } catch (e) {
       console.error('Failed to configure Kafka backend:', e);
       setIsConnected(false);
     }
   };
 
-  const handleFilterChange = (filters: any) => {
-    console.log('Filters changed:', filters);
-    // Здесь можно добавить логику фильтрации
+  const handleFilterChange = (changed: any) => {
+    const next = { ...pendingFilters, ...changed };
+    setPendingFilters(next);
   };
 
-  const handleRefresh = () => {
-    const messageType = currentConfig?.messageType || 'json';
-    setMessages(generateMockMessages(currentPage, 10, messageType));
+  const handleRefresh = async () => {
+    if (!currentConfig) return;
+    // Apply pending filters if they differ from applied
+    const isDirty = JSON.stringify(pendingFilters) !== JSON.stringify(appliedFilters);
+    try {
+      if (isDirty) {
+        await invoke('apply_filters', {
+          args: {
+            partition: pendingFilters.partition,
+            start_offset: pendingFilters.startOffset,
+          },
+        });
+        setAppliedFilters(pendingFilters);
+      }
+    } catch (e) {
+      console.error('Failed to apply filters on refresh', e);
+    }
+    // Reset local buffer and fetch fresh batch from current consumer position
+    setBuffer([]);
+    setCurrentPage(1);
+    await fetchNextBatch();
   };
 
   const toggleConnection = () => {
@@ -110,6 +139,8 @@ export default function App() {
     setSelectedMessage(message);
     setMessageDetailOpen(true);
   };
+
+  const isDirty = JSON.stringify(pendingFilters) !== JSON.stringify(appliedFilters);
 
   return (
     <div className="h-screen bg-background flex flex-col">
@@ -150,18 +181,24 @@ export default function App() {
 
       {/* Main Content */}
       <div className="flex-1 flex">
-        <FilterPanel 
-          onFilterChange={handleFilterChange}
-          onRefresh={handleRefresh}
-          currentConfig={currentConfig}
-        />
+        {currentConfig && isConnected && (
+          <FilterPanel 
+            onFilterChange={handleFilterChange}
+            onRefresh={handleRefresh}
+            currentConfig={currentConfig}
+            partitions={partitions}
+            refreshDisabled={!isDirty}
+            selectedPartition={pendingFilters.partition}
+          />
+        )}
         
         <div className="flex-1 flex flex-col">
           <div className="flex-1 p-6">
             {currentConfig ? (
               <MessagesTable 
-                messages={messages} 
+                messages={pageMessages} 
                 onMessageClick={handleMessageClick}
+                loading={isLoading}
               />
             ) : (
               <div className="flex items-center justify-center h-full">

@@ -19,9 +19,6 @@ interface ConfigurationData {
   sslCaPath?: string;
   messageType: 'json' | 'text' | 'protobuf';
   protoSchemaPath?: string;
-  partition: string;
-  offsetType: string;
-  startOffset: number;
 }
 
 interface ConfigurationModalProps {
@@ -34,10 +31,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     broker: 'localhost:9092',
     topic: 'user-events',
     sslEnabled: false,
-    messageType: 'json',
-    partition: 'all',
-    offsetType: 'latest',
-    startOffset: 0
+    messageType: 'json'
   });
   const [topics, setTopics] = useState<string[]>([]);
   const [topicsBroker, setTopicsBroker] = useState<string | null>(null);
@@ -70,9 +64,6 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     ssl_key_path: c.sslKeyPath || null,
     ssl_ca_path: c.sslCaPath || null,
     message_type: c.messageType,
-    partition: c.partition,
-    offset_type: c.offsetType,
-    start_offset: c.startOffset,
     proto_schema_path: c.protoSchemaPath || null,
   });
 
@@ -289,52 +280,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                   </div>
                 )}
                 
-                <div>
-                  <Label htmlFor="partition">Partition</Label>
-                  <Select
-                    value={config.partition}
-                    onValueChange={(value: string) => setConfig(prev => ({ ...prev, partition: value }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select partition" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All partitions</SelectItem>
-                      <SelectItem value="0">Partition 0</SelectItem>
-                      <SelectItem value="1">Partition 1</SelectItem>
-                      <SelectItem value="2">Partition 2</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
                 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="offset-type">Offset Type</Label>
-                    <Select
-                      value={config.offsetType}
-                      onValueChange={(value: string) => setConfig(prev => ({ ...prev, offsetType: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Offset type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="earliest">Earliest</SelectItem>
-                        <SelectItem value="latest">Latest</SelectItem>
-                        <SelectItem value="custom">Custom</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="start-offset">Start Offset</Label>
-                    <Input
-                      id="start-offset"
-                      type="number"
-                      value={config.startOffset}
-                      onChange={(e) => setConfig(prev => ({ ...prev, startOffset: parseInt(e.target.value) || 0 }))}
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
               </CardContent>
             </Card>
           </TabsContent>

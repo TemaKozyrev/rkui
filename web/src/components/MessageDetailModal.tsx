@@ -50,32 +50,32 @@ export function MessageDetailModal({ message, open, onOpenChange, messageType = 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-[50rem] max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
             Message Details
           </DialogTitle>
         </DialogHeader>
-        
+
         <div className="space-y-4">
           {/* Message Metadata */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/30 rounded-lg">
-            <div>
+          <div className="grid grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg md:grid-cols-[10%_15%_35%_40%] overflow-x-auto">
+            <div className="min-w-0">
               <div className="text-sm text-muted-foreground">Partition</div>
               <Badge variant="outline">{message.partition}</Badge>
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="text-sm text-muted-foreground">Offset</div>
-              <div className="font-mono text-sm">{message.offset}</div>
+              <div className="font-mono text-sm truncate">{message.offset}</div>
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="text-sm text-muted-foreground">Key</div>
               <div className="font-mono text-sm truncate">{message.key}</div>
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="text-sm text-muted-foreground">Timestamp</div>
-              <div className="text-sm">{message.timestamp}</div>
+              <div className="text-sm truncate">{message.timestamp}</div>
             </div>
           </div>
 

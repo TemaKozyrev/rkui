@@ -13,6 +13,9 @@ fn main() {
             kafka_adapter::set_kafka_config,
             kafka_adapter::get_kafka_status,
             kafka_adapter::get_topics,
+            kafka_adapter::get_topic_partitions,
+            kafka_adapter::apply_filters,
+            kafka_adapter::consume_next_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

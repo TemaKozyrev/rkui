@@ -9,9 +9,12 @@ interface FilterPanelProps {
   onFilterChange: (filters: any) => void;
   onRefresh: () => void;
   currentConfig?: any;
+  partitions?: number[];
+  refreshDisabled?: boolean;
+  selectedPartition?: string;
 }
 
-export function FilterPanel({ onFilterChange, onRefresh, currentConfig }: FilterPanelProps) {
+export function FilterPanel({ onFilterChange, onRefresh, currentConfig, partitions = [], refreshDisabled = false, selectedPartition = 'all' }: FilterPanelProps) {
   return (
     <div className="w-80 bg-muted/30 p-6 space-y-4">
       <Card>
@@ -37,18 +40,30 @@ export function FilterPanel({ onFilterChange, onRefresh, currentConfig }: Filter
         <CardContent className="space-y-4">
           <div>
             <Label htmlFor="partition-filter">Partition</Label>
-            <Select defaultValue="all">
+            <Select defaultValue="all" onValueChange={(value) => onFilterChange({ partition: value })}>
               <SelectTrigger>
                 <SelectValue placeholder="Select partition" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All partitions</SelectItem>
-                <SelectItem value="0">Partition 0</SelectItem>
-                <SelectItem value="1">Partition 1</SelectItem>
-                <SelectItem value="2">Partition 2</SelectItem>
+                {(partitions ?? []).map((p) => (
+                  <SelectItem key={p} value={String(p)}>{`Partition ${p}`}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
+
+          {selectedPartition !== 'all' && (
+            <div>
+              <Label htmlFor="start-offset">Start Offset</Label>
+              <Input
+                id="start-offset"
+                type="number"
+                placeholder="0"
+                onChange={(e) => onFilterChange({ startOffset: parseInt(e.target.value || '0', 10) })}
+              />
+            </div>
+          )}
           
           <div>
             <Label htmlFor="key-filter">Key Filter</Label>
@@ -70,7 +85,7 @@ export function FilterPanel({ onFilterChange, onRefresh, currentConfig }: Filter
         </CardContent>
       </Card>
 
-      <Button className="w-full gap-2" onClick={onRefresh}>
+      <Button className="w-full gap-2" onClick={onRefresh} disabled={refreshDisabled}>
         <RefreshCw className="h-4 w-4" />
         Refresh Messages
       </Button>
