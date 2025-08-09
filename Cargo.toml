@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "2" }
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rdkafka = { version = "0.36", features = ["ssl", "sasl"] }
@@ -16,5 +16,12 @@ env_logger = "0.11"
 chrono = { version = "0.4" }
 
 [build-dependencies]
-tauri-build = { version = "2" }
+tauri-build = { version = "2", features = [] }
 base64 = "0.21"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+opt-level = "z"
+panic = "abort"

@@ -5,6 +5,7 @@ Cargo.lock
 
 # Dependencies
 web/node_modules
+web/dist
 /.pnp
 .pnp.js
 
