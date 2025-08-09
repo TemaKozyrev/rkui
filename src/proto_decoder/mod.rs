@@ -1,13 +1,12 @@
 use serde::Serialize;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use std::sync::Arc;
-use std::collections::HashMap;
 
 use protobuf::descriptor::{DescriptorProto, FileDescriptorProto, FileDescriptorSet};
-use protobuf::Message; // for parse_from_bytes
 use protobuf::reflect::{FileDescriptor, MessageDescriptor};
+
+use crate::utils::{link_file_descriptors, normalize_full_name, run_protoc_and_read_descriptor_set};
 
 #[derive(Debug, Serialize)]
 pub struct ProtoMetadata {
@@ -15,15 +14,6 @@ pub struct ProtoMetadata {
     pub messages: Vec<String>,
 }
 
-fn unique_parent_dirs(files: &[String]) -> Vec<PathBuf> {
-    let mut set: HashSet<PathBuf> = HashSet::new();
-    for f in files {
-        if let Some(parent) = Path::new(f).parent() {
-            set.insert(parent.to_path_buf());
-        }
-    }
-    set.into_iter().collect()
-}
 
 fn collect_messages_from_descriptor(
     pkg: &str,
@@ -73,9 +63,8 @@ fn extract_from_file_descriptor(fd: &FileDescriptorProto, packages: &mut HashSet
 pub struct ProtoDecoder {
     // Parsed and typechecked descriptors
     files: Vec<FileDescriptor>,
-    // If provided by UI, decode using this full name; otherwise try candidates sequentially
+    // If provided by UI, decode using this full name
     message_full_name: Option<String>,
-    candidates: Vec<String>,
 }
 
 impl ProtoDecoder {
@@ -89,85 +78,22 @@ impl ProtoDecoder {
             }
         }
         // Build descriptors using protoc-produced descriptor set and link into reflect FileDescriptor graph
-        let protoc_path = protoc_bin_vendored::protoc_bin_path().map_err(|e| format!("Failed to locate protoc: {e}"))?;
-        let tmp = tempfile::NamedTempFile::new().map_err(|e| format!("Failed to create temp file: {e}"))?;
-        let out_path = tmp.path().to_path_buf();
-        let include_dirs = unique_parent_dirs(&files);
-        let mut cmd = Command::new(protoc_path);
-        cmd.arg("--include_imports");
-        cmd.arg(format!("--descriptor_set_out={}", out_path.display()));
-        for inc in &include_dirs {
-            cmd.arg("-I");
-            cmd.arg(inc);
-        }
-        for f in &files {
-            cmd.arg(f);
-        }
-        let output = cmd.output().map_err(|e| format!("Failed to run protoc: {e}"))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("protoc failed: {}", stderr.trim()));
-        }
-        let bytes = std::fs::read(&out_path).map_err(|e| format!("Failed to read descriptor set: {e}"))?;
-        let pb_fds: FileDescriptorSet = Message::parse_from_bytes(&bytes)
-            .map_err(|e| format!("Failed to parse descriptor set (protobuf): {e}"))?;
-        // Topologically link FileDescriptorProto -> reflect::FileDescriptor
-        let mut remaining: Vec<FileDescriptorProto> = pb_fds.file.clone();
-        let mut built: Vec<FileDescriptor> = Vec::new();
-        let mut built_map: HashMap<String, usize> = HashMap::new();
-        let mut progress = true;
-        while !remaining.is_empty() && progress {
-            progress = false;
-            let mut i = 0;
-            while i < remaining.len() {
-                let fd = &remaining[i];
-                let deps_ready = fd.dependency.iter().all(|dep| built_map.contains_key(dep));
-                if deps_ready {
-                    let deps_idx: Vec<usize> = fd.dependency.iter().map(|d| built_map[d]).collect();
-                    let deps_vec: Vec<FileDescriptor> = deps_idx.iter().map(|&idx| built[idx].clone()).collect();
-                    match FileDescriptor::new_dynamic(fd.clone(), deps_vec.as_slice()) {
-                        Ok(fdesc) => {
-                            built_map.insert(fd.name().to_string(), built.len());
-                            built.push(fdesc);
-                            remaining.remove(i);
-                            progress = true;
-                            continue;
-                        }
-                        Err(e) => {
-                            return Err(format!("Failed to build FileDescriptor for {}: {}", fd.name(), e));
-                        }
-                    }
-                }
-                i += 1;
-            }
-        }
-        if !remaining.is_empty() {
-            let rest: Vec<String> = remaining.iter().map(|f| f.name().to_string()).collect();
-            return Err(format!("Failed to resolve dependencies for proto files: {:?}", rest));
-        }
-        // Collect message names for UI compatibility
-        let mut messages: Vec<String> = Vec::new();
-        let mut pkgs: HashSet<String> = HashSet::new();
-        for fd in &pb_fds.file {
-            extract_from_file_descriptor(fd, &mut pkgs, &mut messages);
-        }
-        messages.sort();
-        messages.dedup();
+        let pb_fds: FileDescriptorSet = run_protoc_and_read_descriptor_set(&files)?;
+        let built: Vec<FileDescriptor> = link_file_descriptors(&pb_fds)?;
 
-        // Accept the selected message from UI as-is (normalize), even if not present in the
-        // messages list produced from this particular descriptor set. This avoids dropping a
-        // valid selection when the UI parsed multiple files but the decoder was built from a
-        // subset that still contains compatible types.
-        let chosen = selected_message.map(|mut sel| {
-            // Normalize leading dot if provided by other tools (we store without leading dot)
-            if sel.starts_with('.') { sel.remove(0); }
-            sel
-        });
+        // Accept the selected message from UI as-is (normalize)
+        let chosen = selected_message.map(normalize_full_name);
 
-        Ok(Arc::new(Self { files: built, message_full_name: chosen, candidates: messages }))
+        Ok(Arc::new(Self { files: built, message_full_name: chosen }))
     }
 
     pub fn decode(&self, payload: &[u8]) -> Result<String, String> {
+        // Require an explicitly selected message to avoid expensive guessing and keep UI fast.
+        let name = match &self.message_full_name {
+            Some(n) => n,
+            None => return Err("No protobuf message is selected. Select a specific message type to enable decoding.".to_string()),
+        };
+
         // Resolve message descriptor by full name (accepts with or without leading dot)
         let resolve_msg = |name: &str| -> Result<MessageDescriptor, String> {
             let fq = if name.starts_with('.') { name.to_string() } else { format!(".{}", name) };
@@ -177,24 +103,11 @@ impl ProtoDecoder {
                 .ok_or_else(|| format!("Message type not found in descriptors: {}", fq))
         };
 
-        // Build a list of candidate views of the payload (raw and common envelopes)
-        // Keep ordering stable and logic simple.
+        // Build a list of candidate views of the payload (raw and common envelopes) without allocating copies.
         let mut views: Vec<&[u8]> = Vec::with_capacity(10);
 
         // 1) raw bytes
         views.push(payload);
-
-        // 1a) Repair attempt: if the payload is missing the first tag byte (common for field #1 length-delimited -> 0x0A),
-        // try to preprend 0x0A and decode. This is a conservative heuristic placed after raw so it won't affect valid inputs.
-        let mut owned_views: Vec<Vec<u8>> = Vec::new();
-        {
-            let mut repaired = Vec::with_capacity(payload.len() + 1);
-            repaired.push(0x0A);
-            repaired.extend_from_slice(payload);
-            owned_views.push(repaired);
-            let last = owned_views.last().unwrap();
-            views.push(last.as_slice());
-        }
 
         // Helper: parse a single unsigned varint; returns (consumed_len, value)
         let parse_varint = |bytes: &[u8]| -> Option<(usize, u64)> {
@@ -287,37 +200,29 @@ impl ProtoDecoder {
             }
         }
 
-        // Try selected message first
-        let mut last_err: Option<String> = None;
-        let mut try_with_name = |name: &str| -> Option<String> {
-            let md = match resolve_msg(name) {
-                Ok(m) => m,
-                Err(e) => { last_err = Some(e); return None; }
-            };
-            for bytes in &views {
-                match md.parse_from_bytes(bytes) {
-                    Ok(msg) => match protobuf_json_mapping::print_to_string(&*msg) {
-                        Ok(json) => return Some(json),
-                        Err(e) => { last_err = Some(format!("Failed to serialize protobuf JSON: {}", e)); }
-                    },
-                    Err(e) => { last_err = Some(format!("Failed to parse protobuf payload as .{}: {}", name, e)); }
-                }
-            }
-            None
-        };
-
-        if let Some(name) = &self.message_full_name {
-            if let Some(json) = try_with_name(name) {
-                return Ok(json);
-            }
-        }
-        for name in &self.candidates {
-            if let Some(json) = try_with_name(name) {
-                return Ok(json);
+        // Resolve descriptor once and try to parse views
+        let md = resolve_msg(name)?;
+        for bytes in &views {
+            match md.parse_from_bytes(bytes) {
+                Ok(msg) => match protobuf_json_mapping::print_to_string(&*msg) {
+                    Ok(json) => return Ok(json),
+                    Err(_e) => { /* keep trying other views */ }
+                },
+                Err(_e) => { /* keep trying other views */ }
             }
         }
 
-        Err(last_err.unwrap_or_else(|| "Failed to decode payload with available message types".to_string()))
+        // 1a) Lazy repair attempt: if the payload is missing the first tag byte (common for field #1 length-delimited -> 0x0A)
+        let mut repaired = Vec::with_capacity(payload.len() + 1);
+        repaired.push(0x0A);
+        repaired.extend_from_slice(payload);
+        match md.parse_from_bytes(&repaired) {
+            Ok(msg) => match protobuf_json_mapping::print_to_string(&*msg) {
+                Ok(json) => return Ok(json),
+                Err(e) => return Err(format!("Failed to serialize protobuf JSON: {}", e)),
+            },
+            Err(e) => return Err(format!("Failed to parse protobuf payload as .{} (repaired): {}", name, e)),
+        }
     }
 }
 
@@ -333,34 +238,8 @@ pub async fn parse_proto_metadata(files: Vec<String>) -> Result<ProtoMetadata, S
         }
     }
 
-    // Prepare protoc command using vendored binary
-    let protoc_path = protoc_bin_vendored::protoc_bin_path().map_err(|e| format!("Failed to locate protoc: {e}"))?;
-
-    let tmp = tempfile::NamedTempFile::new().map_err(|e| format!("Failed to create temp file: {e}"))?;
-    let out_path = tmp.path().to_path_buf();
-
-    let include_dirs = unique_parent_dirs(&files);
-
-    let mut cmd = Command::new(protoc_path);
-    cmd.arg("--include_imports");
-    cmd.arg(format!("--descriptor_set_out={}", out_path.display()));
-    for inc in &include_dirs {
-        cmd.arg("-I");
-        cmd.arg(inc);
-    }
-    for f in &files {
-        cmd.arg(f);
-    }
-
-    let output = cmd.output().map_err(|e| format!("Failed to run protoc: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("protoc failed: {}", stderr.trim()));
-    }
-
-    let bytes = std::fs::read(&out_path).map_err(|e| format!("Failed to read descriptor set: {e}"))?;
-    let fds: FileDescriptorSet = Message::parse_from_bytes(&bytes)
-        .map_err(|e| format!("Failed to parse descriptor set: {e}"))?;
+    // Build descriptor set via shared utility
+    let fds: FileDescriptorSet = run_protoc_and_read_descriptor_set(&files)?;
 
     let mut packages_set: HashSet<String> = HashSet::new();
     let mut messages: Vec<String> = Vec::new();

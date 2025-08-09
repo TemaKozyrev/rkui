@@ -2,6 +2,7 @@ mod app;
 mod kafka;
 mod kafka_adapter;
 mod proto_decoder;
+mod utils;
 
 use app::AppState;
 
