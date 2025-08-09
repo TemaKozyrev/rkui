@@ -9,6 +9,8 @@ interface KafkaMessage {
   offset: number;
   message: string;
   timestamp: string;
+  decoding_error?: string;
+  decodingError?: string;
 }
 
 import { Loader2 } from "lucide-react";
@@ -53,31 +55,34 @@ export function MessagesTable({ messages, onMessageClick, loading = false }: Mes
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {messages.map((message) => (
-                  <TableRow 
-                    key={message.id} 
-                    className="hover:bg-muted/30 cursor-pointer transition-colors"
-                    onClick={() => onMessageClick?.(message)}
-                  >
-                    <TableCell>
-                      <Badge variant="outline">{message.partition}</Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {message.key}
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {message.offset}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {message.timestamp}
-                    </TableCell>
-                    <TableCell>
-                      <div className="max-w-md truncate font-mono text-sm">
-                        {message.message}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {messages.map((message) => {
+                  const hasError = !!(message.decoding_error || message.decodingError);
+                  return (
+                    <TableRow 
+                      key={message.id} 
+                      className={`${hasError ? 'bg-red-50/70' : ''} hover:bg-muted/30 cursor-pointer transition-colors`}
+                      onClick={() => onMessageClick?.(message)}
+                    >
+                      <TableCell>
+                        <Badge variant="outline">{message.partition}</Badge>
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {message.key}
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {message.offset}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {message.timestamp}
+                      </TableCell>
+                      <TableCell>
+                        <div className="max-w-md truncate font-mono text-sm">
+                          {message.message}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

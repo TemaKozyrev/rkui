@@ -19,7 +19,7 @@ impl AppState {
 
     /// Create/replace Kafka reader according to new config.
     pub fn reconfigure_kafka(&self, cfg: KafkaConfig) -> anyhow::Result<()> {
-        let mut guard = self.kafka.lock().unwrap();
+        let mut guard = self.kafka.lock().map_err(|e| anyhow::anyhow!("Failed to access state: {e}"))?;
         // Drop previous (it will close on drop)
         *guard = None;
         let kafka = Kafka::new(cfg)?;

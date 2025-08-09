@@ -10,6 +10,9 @@
     "devUrl": "http://127.0.0.1:5173"
   },
   "app": {
+    "security": {
+      "capabilities": ["default"]
+    },
     "windows": [
       {
         "title": "rkui",

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from '@tauri-apps/api/core';
+import { open as openDialog, message as showDialog } from '@tauri-apps/plugin-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -18,7 +19,11 @@ interface ConfigurationData {
   sslKeyPath?: string;
   sslCaPath?: string;
   messageType: 'json' | 'text' | 'protobuf';
+  // Legacy single proto schema path (kept for backward compatibility with backend)
   protoSchemaPath?: string;
+  // New fields for proto mode (UI only for now)
+  protoFiles?: string[];
+  protoSelectedMessage?: string;
 }
 
 interface ConfigurationModalProps {
@@ -39,15 +44,54 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
   const [topicsError, setTopicsError] = useState<string | null>(null);
   const [topicFocused, setTopicFocused] = useState(false);
 
+  // Proto parsing UI state
+  const [protoFiles, setProtoFiles] = useState<string[]>([]);
+  const [isParsingProto, setIsParsingProto] = useState(false);
+  const [parsedMessages, setParsedMessages] = useState<string[]>([]);
+  const [parseError, setParseError] = useState<string | null>(null);
+
   const handlePickProtoFile = async () => {
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected = await open({ filters: [{ name: 'Proto', extensions: ['proto'] }], multiple: false });
+      const selected = await openDialog({ filters: [{ name: 'Proto', extensions: ['proto'] }], multiple: true });
       if (typeof selected === 'string') {
-        setConfig(prev => ({ ...prev, protoSchemaPath: selected }));
+        setProtoFiles([selected]);
+        setConfig(prev => ({ ...prev, protoSchemaPath: selected, protoFiles: [selected] }));
+      } else if (Array.isArray(selected)) {
+        const files = selected.filter((x): x is string => typeof x === 'string');
+        setProtoFiles(files);
+        setConfig(prev => ({ ...prev, protoSchemaPath: files[0], protoFiles: files }));
       }
-    } catch (e) {
-      console.error('Failed to pick proto file', e);
+    } catch (e: any) {
+      console.error('Failed to pick proto file(s)', e);
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to open file dialog');
+      await showDialog(text, { title: 'Error', kind: 'error' });
+      // Also reflect inline for context
+      setParseError('Failed to open file dialog. Please run inside Tauri and ensure dialog permissions are enabled. See console for details.');
+    }
+  };
+
+  const handleLoadProtoMetadata = async () => {
+    if (protoFiles.length === 0) return;
+    try {
+      setIsParsingProto(true);
+      setParseError(null);
+      const res = await invoke<{ packages: string[]; messages: string[] }>("parse_proto_metadata", { files: protoFiles });
+      setParsedMessages(res?.messages || []);
+      // If previously selected message is not in new list, clear it
+      setConfig(prev => ({
+        ...prev,
+        protoSelectedMessage: prev.protoSelectedMessage && (res?.messages || []).includes(prev.protoSelectedMessage)
+          ? prev.protoSelectedMessage
+          : undefined,
+      }));
+    } catch (e: any) {
+      console.error('Failed to parse proto metadata', e);
+      setParsedMessages([]);
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to parse proto metadata');
+      setParseError(text);
+      await showDialog(text, { title: 'Proto Error', kind: 'error' });
+    } finally {
+      setIsParsingProto(false);
     }
   };
 
@@ -65,6 +109,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     ssl_ca_path: c.sslCaPath || null,
     message_type: c.messageType,
     proto_schema_path: c.protoSchemaPath || null,
+    proto_message_full_name: c.protoSelectedMessage || null,
   });
 
   const fetchTopicsForBroker = async (broker: string) => {
@@ -81,8 +126,10 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     } catch (e: any) {
       console.error("Failed to fetch topics:", e);
       setTopics([]);
-      setTopicsError(typeof e === 'string' ? e : (e?.toString?.() || 'Failed to fetch topics'));
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to fetch topics');
+      setTopicsError(text);
       setTopicsBroker(null);
+      await showDialog(text, { title: 'Topics Error', kind: 'error' });
     } finally {
       setIsFetchingTopics(false);
     }
@@ -259,28 +306,70 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                 </div>
                 
                 {config.messageType === 'protobuf' && (
-                  <div>
-                    <Label>Proto Schema File</Label>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={handlePickProtoFile}
-                        className="gap-2"
-                      >
-                        <Upload className="h-4 w-4" />
-                        Select .proto file
-                      </Button>
-                      {config.protoSchemaPath && (
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                          <FileText className="h-4 w-4" />
-                          {config.protoSchemaPath}
+                  <div className="space-y-3">
+                    <div>
+                      <Label>Proto Schema Files</Label>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={handlePickProtoFile}
+                          className="gap-2"
+                        >
+                          <Upload className="h-4 w-4" />
+                          Select .proto files
+                        </Button>
+                        {protoFiles.length > 0 && (
+                          <div className="text-xs text-muted-foreground">
+                            {protoFiles.length} file(s) selected
+                          </div>
+                        )}
+                      </div>
+                      {protoFiles.length > 0 && (
+                        <div className="mt-2 max-h-24 overflow-auto rounded border p-2 text-xs">
+                          {protoFiles.map((f) => (
+                            <div key={f} className="flex items-center gap-1">
+                              <FileText className="h-3 w-3" />
+                              <span className="truncate">{f}</span>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button onClick={handleLoadProtoMetadata} disabled={protoFiles.length === 0 || isParsingProto}>
+                        {isParsingProto ? 'Loading…' : 'Load'}
+                      </Button>
+                      {isParsingProto && (
+                        <div className="text-sm text-muted-foreground">Parsing schemas…</div>
+                      )}
+                      {!isParsingProto && parseError && (
+                        <div className="text-sm text-destructive">{parseError}</div>
+                      )}
+                    </div>
+
+                    {!isParsingProto && parsedMessages.length > 0 && (
+                      <div>
+                        <Label htmlFor="proto-message">Select Message Type</Label>
+                        <Select
+                          value={config.protoSelectedMessage || ''}
+                          onValueChange={(value: string) => setConfig(prev => ({ ...prev, protoSelectedMessage: value }))}
+                        >
+                          <SelectTrigger id="proto-message">
+                            <SelectValue placeholder="Choose message type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {parsedMessages.map(m => (
+                              <SelectItem key={m} value={m}>{m}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 )}
-                
-                
+
+
               </CardContent>
             </Card>
           </TabsContent>

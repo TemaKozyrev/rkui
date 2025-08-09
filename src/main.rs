@@ -1,6 +1,7 @@
 mod app;
 mod kafka;
 mod kafka_adapter;
+mod proto_decoder;
 
 use app::AppState;
 
@@ -8,6 +9,7 @@ fn main() {
     env_logger::init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             kafka_adapter::set_kafka_config,
@@ -16,6 +18,7 @@ fn main() {
             kafka_adapter::get_topic_partitions,
             kafka_adapter::apply_filters,
             kafka_adapter::consume_next_messages,
+            proto_decoder::parse_proto_metadata,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

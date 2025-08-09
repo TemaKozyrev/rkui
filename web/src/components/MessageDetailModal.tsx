@@ -12,6 +12,8 @@ interface KafkaMessage {
   offset: number;
   message: string;
   timestamp: string;
+  decoding_error?: string; // backend snake_case
+  decodingError?: string;  // camelCase fallback
 }
 
 interface MessageDetailModalProps {
@@ -47,6 +49,7 @@ export function MessageDetailModal({ message, open, onOpenChange, messageType = 
   };
 
   const formattedMessage = formatMessage(message.message, messageType);
+  const decodingError = (message.decoding_error || message.decodingError) as string | undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -59,6 +62,14 @@ export function MessageDetailModal({ message, open, onOpenChange, messageType = 
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Decoding Error (if any) */}
+          {decodingError && (
+            <div className="p-3 rounded-md border border-red-200 bg-red-50 text-red-700 text-sm">
+              <div className="font-semibold mb-1">Ошибка декодирования</div>
+              <div className="whitespace-pre-wrap break-words">{decodingError}</div>
+            </div>
+          )}
+
           {/* Message Metadata */}
           <div className="grid grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg md:grid-cols-[10%_15%_35%_40%] overflow-x-auto">
             <div className="min-w-0">

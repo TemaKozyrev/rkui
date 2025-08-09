@@ -7,6 +7,7 @@ import { MessageDetailModal } from "./components/MessageDetailModal";
 import { Button } from "./components/ui/button";
 import { Play, Pause } from "lucide-react";
 import { invoke } from '@tauri-apps/api/core';
+import { message as showDialog } from '@tauri-apps/plugin-dialog';
 
 type KafkaMessage = {
   id: string;
@@ -15,6 +16,8 @@ type KafkaMessage = {
   offset: number;
   message: string;
   timestamp: string;
+  decoding_error?: string; // backend snake_case
+  decodingError?: string; // in case it comes as camelCase
 };
 
 const PAGE_SIZE = 20;
@@ -46,9 +49,18 @@ export default function App() {
       const next: KafkaMessage[] = await invoke('consume_next_messages', { limit: 200 });
       if (Array.isArray(next) && next.length > 0) {
         setBuffer(prev => [...prev, ...next]);
+        // If any messages failed to decode, notify the user
+        const failed = next.filter(m => (m.decoding_error || m.decodingError));
+        if (failed.length > 0) {
+          const first = failed[0];
+          const errText = (first.decoding_error || first.decodingError) as string;
+          await showDialog(`Некоторые сообщения не удалось декодировать. Показан текстовый формат.\nПервая ошибка: ${errText}`, { title: 'Ошибка декодирования Protobuf', kind: 'error' });
+        }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to fetch messages:', e);
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to fetch messages');
+      await showDialog(text, { title: 'Fetch Messages Error', kind: 'error' });
     } finally {
       setIsLoading(false);
     }
@@ -76,6 +88,7 @@ export default function App() {
       ssl_ca_path: config.sslCaPath || null,
       message_type: config.messageType,
       proto_schema_path: config.protoSchemaPath || null,
+      proto_message_full_name: config.protoSelectedMessage || null,
     };
 
     try {
@@ -84,9 +97,11 @@ export default function App() {
       try {
         const parts: number[] = await invoke('get_topic_partitions', { config: payload });
         setPartitions(parts || []);
-      } catch (e) {
+      } catch (e: any) {
         console.warn('Failed to fetch partitions for topic', e);
         setPartitions([]);
+        const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to fetch partitions for topic');
+        await showDialog(text, { title: 'Partitions Error', kind: 'error' });
       }
       setCurrentConfig(config);
       setIsConnected(true);
@@ -97,9 +112,11 @@ export default function App() {
       setAppliedFilters(defaults);
       setPendingFilters(defaults);
       await fetchNextBatch();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to configure Kafka backend:', e);
       setIsConnected(false);
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to configure Kafka backend');
+      await showDialog(text, { title: 'Configuration Error', kind: 'error' });
     }
   };
 
@@ -122,8 +139,10 @@ export default function App() {
         });
         setAppliedFilters(pendingFilters);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to apply filters on refresh', e);
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to apply filters');
+      await showDialog(text, { title: 'Apply Filters Error', kind: 'error' });
     }
     // Reset local buffer and fetch fresh batch from current consumer position
     setBuffer([]);

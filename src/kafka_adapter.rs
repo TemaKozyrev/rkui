@@ -24,12 +24,12 @@ pub async fn set_kafka_config(state: State<'_, AppState>, config: KafkaConfig) -
 
 /// Read-only status for the UI header.
 #[tauri::command]
-pub fn get_kafka_status(state: State<AppState>) -> String {
-    let guard = state.kafka.lock().unwrap();
+pub fn get_kafka_status(state: State<AppState>) -> Result<String, String> {
+    let guard = state.kafka.lock().map_err(|e| format!("Failed to access state: {e}"))?;
     if let Some(k) = &*guard {
-        format!("connected to {} topic {}", k.config.broker, k.config.topic)
+        Ok(format!("connected to {} topic {}", k.config.broker, k.config.topic))
     } else {
-        "not configured".to_string()
+        Err("Kafka is not configured".to_string())
     }
 }
 
@@ -51,7 +51,7 @@ pub async fn apply_filters(
     state: State<'_, AppState>,
     args: ApplyFiltersArgs,
 ) -> Result<(), String> {
-    let mut guard = state.kafka.lock().unwrap();
+    let mut guard = state.kafka.lock().map_err(|e| format!("Failed to access state: {e}"))?;
     if let Some(k) = guard.as_mut() {
         k.apply_filters_mut(args.partition, args.start_offset)
             .map_err(|e| format!("Failed to apply filters: {e}"))
@@ -63,7 +63,7 @@ pub async fn apply_filters(
 /// Consume the next batch of messages using the currently selected strategy.
 #[tauri::command]
 pub async fn consume_next_messages(state: State<'_, AppState>, limit: Option<usize>) -> Result<Vec<UiMessage>, String> {
-    let guard = state.kafka.lock().unwrap();
+    let guard = state.kafka.lock().map_err(|e| format!("Failed to access state: {e}"))?;
     if let Some(k) = &*guard {
         let lim = limit.unwrap_or(200);
         k.consume_next(lim).map_err(|e| format!("Failed to consume messages: {e}"))
