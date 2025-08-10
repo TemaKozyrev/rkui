@@ -1,54 +1,109 @@
 # rkui
 
-Этот проект использует Tauri v2. Для сборки установочного пакета необходим набор иконок, перечисленных в `tauri.conf.json`.
+rkui — кроссплатформенное настольное приложение (Tauri v2 + Rust + React/Vite) для чтения и анализа сообщений Apache Kafka с возможностью декодирования Protobuf.
 
-## Генерация набора иконок через Tauri CLI
+Основные возможности:
+- Подключение к Kafka (SASL/SSL поддерживается rdkafka).
+- Просмотр топиков и партиций, получение сообщений из выбранных партиций.
+- Фильтрация и потоковая подгрузка записей.
+- Декодирование сообщений по .proto-схемам (динамически, без генерации кода).
 
-Tauri предоставляет встроенную команду генерации иконок из одного SVG/PNG исходника.
+Стек:
+- Backend: Rust, Tauri v2, rdkafka, tokio, serde.
+- Frontend: React + Vite + TypeScript (директория `web`).
 
-Требования:
-- Установлен Tauri CLI: `cargo install tauri-cli` (или следуйте официальной инструкции: https://tauri.app/v1/guides/getting-started/prerequisites/)
-- Rust и Node уже установлены (как для обычной разработки с Tauri).
 
-В проект уже добавлен базовый файл иконки:
-- `assets/icon.svg`
+## Требования
 
-И добавлен npm-скрипт для генерации из директории `web`:
+Общие:
+- Rust (stable)
+- Node.js 18+ (рекомендуется 20 LTS) и npm
+- Tauri CLI: `cargo install tauri-cli`
+
+Linux (Ubuntu):
+- `sudo apt-get update`
+- `sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf librdkafka-dev`
+
+macOS:
+- Xcode Command Line Tools: `xcode-select --install`
+- (Опционально) сертификаты для подписи, если планируете распространение за пределами CI. Без них будут собираться неподписанные артефакты (ad-hoc).
+
+
+## Установка зависимостей фронтенда
+
+Фронтенд находится в каталоге `web`:
 
 ```bash
-npm run tauri:icon --prefix web
+npm ci --prefix web
 ```
 
-Эта команда выполнит:
+Это нужно выполнить один раз (и при изменении зависимостей фронта).
+
+
+## Локальная разработка
 
 ```bash
-cargo tauri icon -o icons assets/icon.svg
-```
+# Убедитесь, что фронтенд зависимости установлены
+npm ci --prefix web
 
-В результате в корне проекта появится папка `icons` с требуемыми файлами:
-- `icons/icon.icns`
-- `icons/icon.ico`
-- `icons/128x128.png`
-- `icons/256x256.png`
-- `icons/512x512.png`
-
-Пути к этим файлам уже прописаны в `tauri.conf.json` в секции `bundle.icon`.
-
-### Примечания
-- Вместо `assets/icon.svg` вы можете использовать свой PNG или SVG файл (рекомендуется 512×512 и больше), просто поменяйте путь в команде: `cargo tauri icon -o icons path/to/your_icon.(png|svg)`.
-- Команду можно запускать повторно при смене иконки — файлы будут перегенерированы.
-- Если вы работаете не из папки `web`, можете запустить ту же команду из корня:
-
-```bash
-cargo tauri icon -o icons assets/icon.svg
-```
-
-После генерации можете собрать приложение:
-
-```bash
-# dev-режим
+# Запуск приложения в dev-режиме (Tauri сам запустит Vite dev-сервер)
 cargo tauri dev
+```
 
-# release-сборка
+По умолчанию Tauri использует настройки из `tauri.conf.json`. В конфиге уже указаны команды сборки фронтенда из каталога `web`.
+
+
+## Сборка релизной версии
+
+```bash
+# Убедитесь, что фронтенд зависимости установлены
+npm ci --prefix web
+
+# Сборка релизной версии
 cargo tauri build
 ```
+
+Результаты сборки появляются в `target/release` и установочные пакеты — в `target/release/bundle/*` (AppImage/DEB на Linux, .app/.dmg на macOS и т.д., в зависимости от платформы).
+
+
+## Работа с Protobuf (пример)
+
+В репозитории есть пример скрипта для генерации бинарного сообщения Protobuf: `./gen_msg.sh` (использует `protoc`). Он собирает `proto_message.bin` по схемам `example.proto` и `address.proto` и может использоваться для тестирования декодера.
+
+```bash
+./gen_msg.sh
+```
+
+
+## Иконки приложения
+
+Для сборки пакетов нужен набор иконок. Вы можете сгенерировать их из одного SVG:
+
+```bash
+# из каталога web
+npm run tauri:icon --prefix web
+
+# или из корня
+cargo tauri icon -o icons assets/icon.svg
+```
+
+После генерации в корне появится каталог `icons` с необходимыми файлами. Путь к иконке/иконкам настраивается в `tauri.conf.json` (секция `bundle.icon`).
+
+
+## CI/CD: релиз по тэгу
+
+При пуше тэга вида `v*` (например, `v0.1.0`) GitHub Actions собирает релизные артефакты для Linux и macOS и публикует их в GitHub Releases.
+
+Шаги:
+- Убедитесь, что в репозитории включён GitHub Actions.
+- Создайте тэг и отправьте в удалённый репозиторий:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Action автоматически:
+- Установит зависимости среды (Rust/Node и системные библиотеки для Linux).
+- Соберёт фронтенд и Tauri-приложение.
+- Создаст релиз и приложит артефакты (исполняемые файлы/пакеты для macOS и Linux).
