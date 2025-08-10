@@ -67,7 +67,9 @@ export function MessagesTable({ messages, onMessageClick, loading = false }: Mes
                         <Badge variant="outline">{message.partition}</Badge>
                       </TableCell>
                       <TableCell className="font-mono text-sm">
-                        {message.key}
+                        <div className="w-32 truncate whitespace-nowrap" title={message.key}>
+                          {message.key}
+                        </div>
                       </TableCell>
                       <TableCell className="font-mono text-sm">
                         {message.offset}

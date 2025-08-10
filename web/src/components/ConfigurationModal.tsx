@@ -267,7 +267,13 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                   <Select
                     value={config.securityType}
                     onValueChange={(value: 'plaintext' | 'ssl' | 'sasl_plaintext') =>
-                      setConfig(prev => ({ ...prev, securityType: value }))
+                      setConfig(prev => ({
+                        ...prev,
+                        securityType: value,
+                        ...(value === 'sasl_plaintext' && (!prev.saslMechanism || prev.saslMechanism.trim() === '')
+                          ? { saslMechanism: 'SCRAM-SHA-512' }
+                          : {})
+                      }))
                     }
                   >
                     <SelectTrigger id="security-type">
@@ -321,7 +327,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                         id="sasl-mechanism"
                         value={config.saslMechanism || ''}
                         onChange={(e) => setConfig(prev => ({ ...prev, saslMechanism: e.target.value }))}
-                        placeholder="PLAIN"
+                        placeholder="SCRAM-SHA-512"
                       />
                     </div>
                     <div>
