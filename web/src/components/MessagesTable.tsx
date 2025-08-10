@@ -44,13 +44,13 @@ export function MessagesTable({ messages, onMessageClick, loading = false }: Mes
           </div>
         ) : (
           <div className="border rounded-md">
-            <Table>
+            <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead className="w-20">Partition</TableHead>
                   <TableHead className="w-32">Key</TableHead>
                   <TableHead className="w-24">Offset</TableHead>
-                  <TableHead className="w-32">Timestamp</TableHead>
+                  <TableHead className="w-[30ch] whitespace-nowrap">Timestamp</TableHead>
                   <TableHead>Message</TableHead>
                 </TableRow>
               </TableHeader>
@@ -72,11 +72,11 @@ export function MessagesTable({ messages, onMessageClick, loading = false }: Mes
                       <TableCell className="font-mono text-sm">
                         {message.offset}
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap w-[30ch] font-mono">
                         {message.timestamp}
                       </TableCell>
                       <TableCell>
-                        <div className="max-w-md truncate font-mono text-sm">
+                        <div className="font-mono text-sm truncate whitespace-nowrap">
                           {message.message}
                         </div>
                       </TableCell>

@@ -348,24 +348,22 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                       )}
                     </div>
 
-                    {!isParsingProto && parsedMessages.length > 0 && (
-                      <div>
-                        <Label htmlFor="proto-message">Select Message Type</Label>
-                        <Select
-                          value={config.protoSelectedMessage || ''}
-                          onValueChange={(value: string) => setConfig(prev => ({ ...prev, protoSelectedMessage: value }))}
-                        >
-                          <SelectTrigger id="proto-message">
-                            <SelectValue placeholder="Choose message type" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {parsedMessages.map(m => (
-                              <SelectItem key={m} value={m}>{m}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
+                    <div>
+                      <Label htmlFor="proto-message">Select Message Type</Label>
+                      <Select
+                        value={config.protoSelectedMessage || ''}
+                        onValueChange={(value: string) => setConfig(prev => ({ ...prev, protoSelectedMessage: value }))}
+                      >
+                        <SelectTrigger id="proto-message" disabled={isParsingProto || parsedMessages.length === 0}>
+                          <SelectValue placeholder={parsedMessages.length === 0 ? "Load schemas to choose" : "Choose message type"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {parsedMessages.map(m => (
+                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
 
