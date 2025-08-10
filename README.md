@@ -84,7 +84,7 @@ cargo tauri build
 npm run tauri:icon --prefix web
 
 # или из корня
-cargo tauri icon -o icons assets/icon.svg
+cargo tauri icon -o icons assets/icon.png
 ```
 
 После генерации в корне появится каталог `icons` с необходимыми файлами. Путь к иконке/иконкам настраивается в `tauri.conf.json` (секция `bundle.icon`).
