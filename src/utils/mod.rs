@@ -51,7 +51,8 @@ pub fn run_protoc_and_read_descriptor_set(files: &[String]) -> Result<FileDescri
     let output = cmd.output().map_err(|e| format!("Failed to run protoc: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("protoc failed: {}", stderr.trim()));
+        let first_line = stderr.lines().next().unwrap_or_default().trim();
+        return Err(format!("protoc failed: {}", first_line));
     }
 
     let bytes = std::fs::read(&out_path)

@@ -1,3 +1,6 @@
+### **НА МАКЕ ПЕРЕД ЗАПУСКОМ ВЫПОЛНИ (что бы достать из карантина):** 
+ `xattr -r -d com.apple.quarantine rkui.app`
+
 # rkui
 
 rkui — кроссплатформенное настольное приложение (Tauri v2 + Rust + React/Vite) для чтения и анализа сообщений Apache Kafka с возможностью декодирования Protobuf.

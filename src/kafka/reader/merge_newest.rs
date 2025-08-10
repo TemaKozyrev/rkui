@@ -24,7 +24,7 @@ pub fn consume_merge_newest(
         };
         if done_all { break; }
         if idle_loops >= 40 { break; }
-        match kafka.consumer.as_ref().poll(Duration::from_millis(200)) {
+        match kafka.consumer.as_ref().poll(Duration::from_millis(20000)) {
             Some(Ok(m)) => {
                 let partition = m.partition();
                 let offset = m.offset();

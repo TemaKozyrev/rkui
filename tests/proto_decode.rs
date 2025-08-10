@@ -60,8 +60,10 @@ fn descriptor_set_includes_person_when_only_import_is_passed() {
 }
 
 #[test]
-fn decode_person_when_only_import_is_passed() {
+fn fail_to_decode_person_when_only_import_is_passed() {
     // Arrange: initialize decoder with only the imported file address.proto
+    // New behavior: decoder only uses explicitly provided files (and their imports),
+    // so providing only address.proto should not allow decoding example.Person.
     let proto_path = "address.proto".to_string();
     let decoder = ProtoDecoder::from_proto_files(vec![proto_path], Some("example.Person".to_string()))
         .expect("failed to init proto decoder with imported-only file");
@@ -72,8 +74,6 @@ fn decode_person_when_only_import_is_passed() {
     // Act
     let res = decoder.decode(&bytes);
 
-    // Assert: should still succeed due to sibling .proto expansion
-    let json = res.expect("decode should succeed when only import is passed");
-    let val: serde_json::Value = serde_json::from_str(&json).expect("valid json");
-    assert!(val.get("name").is_some(), "json should include 'name': {}", json);
+    // Assert: should fail because example.Person descriptor is not present
+    assert!(res.is_err(), "decode should fail when only import is passed; got: {:?}", res);
 }

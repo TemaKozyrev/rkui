@@ -91,19 +91,9 @@ impl ProtoDecoder {
                     }
                 }
             } else if p.is_file() {
-                // include the file itself
-                uniq.insert(p.to_string_lossy().to_string());
-                // enumerate sibling .proto files from canonicalized directory to avoid CWD issues
-                let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-                let dir = abs.parent().unwrap_or(Path::new("."));
-                if let Ok(rd) = std::fs::read_dir(dir) {
-                    for ent in rd.filter_map(|e| e.ok()) {
-                        let sp = ent.path();
-                        if sp.is_file() && sp.extension().map(|e| e == "proto").unwrap_or(false) {
-                            uniq.insert(sp.to_string_lossy().to_string());
-                        }
-                    }
-                }
+                // include the file itself (canonicalized for stability)
+                let can = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                uniq.insert(can.to_string_lossy().to_string());
             } else {
                 return Err(format!("File or directory not found: {}", f));
             }
@@ -301,17 +291,9 @@ pub async fn parse_proto_metadata(files: Vec<String>) -> Result<ProtoMetadata, S
                 }
             }
         } else if p.is_file() {
-            uniq.insert(p.to_string_lossy().to_string());
-            if let Some(dir) = p.parent() {
-                if let Ok(rd) = std::fs::read_dir(dir) {
-                    for ent in rd.filter_map(|e| e.ok()) {
-                        let sp = ent.path();
-                        if sp.is_file() && sp.extension().map(|e| e == "proto").unwrap_or(false) {
-                            uniq.insert(sp.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
+            // include the file itself (canonicalized for stability)
+            let can = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            uniq.insert(can.to_string_lossy().to_string());
         } else {
             return Err(format!("File or directory not found: {}", f));
         }
