@@ -32,10 +32,20 @@ pub struct UiMessage {
 pub struct KafkaConfig {
     pub broker: String,
     pub topic: String,
+    // Legacy flag kept for backward compatibility with older UIs
     pub ssl_enabled: bool,
     pub ssl_cert_path: Option<String>,
     pub ssl_key_path: Option<String>,
     pub ssl_ca_path: Option<String>,
+    /// Optional security type sent by the UI: "plaintext" | "ssl" | "sasl_plaintext"
+    #[serde(rename = "security_type", alias = "securityType")]
+    pub security_type: Option<String>,
+    /// Optional SASL mechanism (e.g., PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
+    #[serde(rename = "sasl_mechanism", alias = "saslMechanism")]
+    pub sasl_mechanism: Option<String>,
+    /// JAAS-like config string; we will parse username/password out of it
+    #[serde(rename = "sasl_jaas_config", alias = "saslJaasConfig")]
+    pub sasl_jaas_config: Option<String>,
     pub message_type: MessageType,
     /// "all" or a specific partition id as string
     pub partition: Option<String>,
@@ -65,6 +75,9 @@ impl Default for KafkaConfig {
             ssl_cert_path: None,
             ssl_key_path: None,
             ssl_ca_path: None,
+            security_type: None,
+            sasl_mechanism: None,
+            sasl_jaas_config: None,
             message_type: MessageType::Json,
             partition: None,
             start_offset: None,
@@ -73,6 +86,37 @@ impl Default for KafkaConfig {
             proto_message_full_name: None,
         }
     }
+}
+
+/// Try to extract username and password from a JAAS-like config string.
+/// Expected patterns include username="user" password="pass" (quotes can be ' or ").
+fn parse_username_password_from_jaas(s: &str) -> Option<(String, String)> {
+    fn extract(field: &str, s: &str) -> Option<String> {
+        let needle = format!("{}=", field);
+        let idx = s.find(&needle)?;
+        let after = &s[idx + needle.len()..];
+        match after.chars().next()? {
+            '"' | '\'' => { /* handled below */ }
+            _ => {
+                // Unquoted value: read until whitespace or semicolon
+                let end = after.find(|ch: char| ch.is_whitespace() || ch == ';').unwrap_or(after.len());
+                return Some(after[..end].to_string());
+            }
+        }
+        // We got the first quote char in 'after', need to actually scan correctly
+        let first = after.chars().next()?;
+        if first == '"' || first == '\'' {
+            let q = first;
+            let rest = &after[first.len_utf8()..];
+            if let Some(end) = rest.find(q) {
+                return Some(rest[..end].to_string());
+            }
+        }
+        None
+    }
+    let user = extract("username", s)?;
+    let pass = extract("password", s)?;
+    Some((user, pass))
 }
 
 /// High-level Kafka reader object. Encapsulates consumer and reading state.
@@ -103,16 +147,41 @@ impl Kafka {
         cc.set("enable.auto.commit", "true");
         cc.set("auto.offset.reset", "earliest");
 
-        if config.ssl_enabled {
-            cc.set("security.protocol", "ssl");
-            if let Some(path) = &config.ssl_ca_path {
-                cc.set("ssl.ca.location", path);
+        // Determine effective security type with backward compatibility
+        let sec_type = config
+            .security_type
+            .as_deref()
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| if config.ssl_enabled { "ssl".into() } else { "plaintext".into() });
+
+        match sec_type.as_str() {
+            "ssl" => {
+                cc.set("security.protocol", "ssl");
+                if let Some(path) = &config.ssl_ca_path {
+                    cc.set("ssl.ca.location", path);
+                }
+                if let Some(path) = &config.ssl_cert_path {
+                    cc.set("ssl.certificate.location", path);
+                }
+                if let Some(path) = &config.ssl_key_path {
+                    cc.set("ssl.key.location", path);
+                }
             }
-            if let Some(path) = &config.ssl_cert_path {
-                cc.set("ssl.certificate.location", path);
+            "sasl_plaintext" => {
+                cc.set("security.protocol", "sasl_plaintext");
+                if let Some(mech) = &config.sasl_mechanism {
+                    cc.set("sasl.mechanism", mech);
+                }
+                // Prefer explicit username/password parsed from JAAS config string
+                if let Some(jaas) = &config.sasl_jaas_config {
+                    if let Some((user, pass)) = parse_username_password_from_jaas(jaas) {
+                        cc.set("sasl.username", &user);
+                        cc.set("sasl.password", &pass);
+                    }
+                }
             }
-            if let Some(path) = &config.ssl_key_path {
-                cc.set("ssl.key.location", path);
+            _ => {
+                // plaintext (default): no extra settings
             }
         }
 

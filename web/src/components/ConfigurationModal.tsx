@@ -6,7 +6,6 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Switch } from "./ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Settings, Upload, FileText } from "lucide-react";
@@ -14,16 +13,20 @@ import { Settings, Upload, FileText } from "lucide-react";
 interface ConfigurationData {
   broker: string;
   topic: string;
-  sslEnabled: boolean;
+  securityType: 'plaintext' | 'ssl' | 'sasl_plaintext';
   sslCertPath?: string;
   sslKeyPath?: string;
   sslCaPath?: string;
+  saslMechanism?: string;
+  saslJaasConfig?: string;
   messageType: 'json' | 'text' | 'protobuf';
   // Legacy single proto schema path (kept for backward compatibility with backend)
   protoSchemaPath?: string;
   // New fields for proto mode (UI only for now)
   protoFiles?: string[];
   protoSelectedMessage?: string;
+  // Backward compat flag (unused in new UI)
+  sslEnabled?: boolean;
 }
 
 interface ConfigurationModalProps {
@@ -35,7 +38,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
   const [config, setConfig] = useState<ConfigurationData>({
     broker: 'localhost:9092',
     topic: 'user-events',
-    sslEnabled: false,
+    securityType: 'plaintext',
     messageType: 'json'
   });
   const [topics, setTopics] = useState<string[]>([]);
@@ -122,10 +125,14 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
   const toBackendConfig = (c: ConfigurationData) => ({
     broker: c.broker,
     topic: c.topic,
-    ssl_enabled: c.sslEnabled,
+    // Backward compatibility flag for older backends; derive from securityType
+    ssl_enabled: c.securityType === 'ssl',
+    security_type: c.securityType,
     ssl_cert_path: c.sslCertPath || null,
     ssl_key_path: c.sslKeyPath || null,
     ssl_ca_path: c.sslCaPath || null,
+    sasl_mechanism: c.saslMechanism || null,
+    sasl_jaas_config: c.saslJaasConfig || null,
     message_type: c.messageType,
     proto_schema_path: c.protoSchemaPath || null,
     proto_message_full_name: c.protoSelectedMessage || null,
@@ -180,7 +187,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
         <Tabs defaultValue="connection" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="connection">Connection</TabsTrigger>
-            <TabsTrigger value="ssl">SSL</TabsTrigger>
+            <TabsTrigger value="security">Security</TabsTrigger>
             <TabsTrigger value="messages">Messages</TabsTrigger>
           </TabsList>
           
@@ -249,22 +256,32 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
             </Card>
           </TabsContent>
           
-          <TabsContent value="ssl" className="space-y-4">
+          <TabsContent value="security" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>SSL Configuration</CardTitle>
+                <CardTitle>Security</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="ssl-enabled"
-                    checked={config.sslEnabled}
-                    onCheckedChange={(checked: boolean) => setConfig(prev => ({ ...prev, sslEnabled: checked }))}
-                  />
-                  <Label htmlFor="ssl-enabled">Enable SSL</Label>
+                <div>
+                  <Label htmlFor="security-type">Type</Label>
+                  <Select
+                    value={config.securityType}
+                    onValueChange={(value: 'plaintext' | 'ssl' | 'sasl_plaintext') =>
+                      setConfig(prev => ({ ...prev, securityType: value }))
+                    }
+                  >
+                    <SelectTrigger id="security-type">
+                      <SelectValue placeholder="Select security type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="plaintext">Plaintext</SelectItem>
+                      <SelectItem value="ssl">SSL</SelectItem>
+                      <SelectItem value="sasl_plaintext">SASL Plaintext</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                
-                {config.sslEnabled && (
+
+                {config.securityType === 'ssl' && (
                   <>
                     <div>
                       <Label htmlFor="ssl-cert">Certificate Path</Label>
@@ -291,6 +308,30 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                         value={config.sslCaPath || ''}
                         onChange={(e) => setConfig(prev => ({ ...prev, sslCaPath: e.target.value }))}
                         placeholder="/path/to/ca.crt"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {config.securityType === 'sasl_plaintext' && (
+                  <>
+                    <div>
+                      <Label htmlFor="sasl-mechanism">SASL Mechanism</Label>
+                      <Input
+                        id="sasl-mechanism"
+                        value={config.saslMechanism || ''}
+                        onChange={(e) => setConfig(prev => ({ ...prev, saslMechanism: e.target.value }))}
+                        placeholder="PLAIN"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="sasl-jaas-config">JAAS Config</Label>
+                      <textarea
+                        id="sasl-jaas-config"
+                        value={config.saslJaasConfig || ''}
+                        onChange={(e) => setConfig(prev => ({ ...prev, saslJaasConfig: e.target.value }))}
+                        placeholder='org.apache.kafka.common.security.plain.PlainLoginModule required username="user" password="pass";'
+                        className="w-full min-h-24 rounded border px-3 py-2 text-sm bg-background"
                       />
                     </div>
                   </>
