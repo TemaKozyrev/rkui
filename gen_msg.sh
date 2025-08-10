@@ -8,7 +8,7 @@ OUT_BIN="proto_message.bin"       # выходной бинарный файл
 ADDRESS_PROTO="address.proto"     # путь к address.proto
 
 # Захардкоженные параметры для Person и Address
-NAME="John Doe"
+NAME="Marie Doe"
 ID=123456
 EMAIL="johndoe@example.com"
 CITY="New York"

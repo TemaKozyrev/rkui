@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ConfigurationModal } from "./components/ConfigurationModal";
 import { FilterPanel } from "./components/FilterPanel";
 import { MessagesTable } from "./components/MessagesTable";
@@ -7,6 +7,7 @@ import { MessageDetailModal } from "./components/MessageDetailModal";
 import { Button } from "./components/ui/button";
 import { Play, Pause } from "lucide-react";
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { message as showDialog } from '@tauri-apps/plugin-dialog';
 
 type KafkaMessage = {
@@ -31,16 +32,19 @@ export default function App() {
   const [messageDetailOpen, setMessageDetailOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [partitions, setPartitions] = useState<number[]>([]);
-  const [appliedFilters, setAppliedFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest' }>({
+  const [appliedFilters, setAppliedFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest'; keyFilter?: string; messageFilter?: string }>({
     partition: 'all',
     startOffset: 0,
     startFrom: 'oldest',
   });
-  const [pendingFilters, setPendingFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest' }>({
+  const [pendingFilters, setPendingFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest'; keyFilter?: string; messageFilter?: string }>({
     partition: 'all',
     startOffset: 0,
     startFrom: 'oldest',
   });
+  const [isStreaming, setIsStreaming] = useState(false);
+  const eventUnsubRef = useRef<(() => void)[]>([]);
+  const hasShownDecodeErrorRef = useRef(false);
 
   const totalPages = Math.max(1, Math.ceil(buffer.length / PAGE_SIZE));
   const pageMessages = buffer.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -70,10 +74,10 @@ export default function App() {
 
   const handlePageChange = async (page: number) => {
     setCurrentPage(page);
-    // If navigating to the last page and it is full, prefetch next 150
+    // If navigating to the last page and it is full, prefetch next 150 (only when not streaming)
     const isLastPage = page === Math.max(1, Math.ceil(buffer.length / PAGE_SIZE));
     const thisPageLen = buffer.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).length;
-    if (isLastPage && thisPageLen === PAGE_SIZE) {
+    if (!isStreaming && isLastPage && thisPageLen === PAGE_SIZE) {
       fetchNextBatch();
     }
   };
@@ -127,6 +131,40 @@ export default function App() {
     setPendingFilters(next);
   };
 
+  const clearEventListeners = () => {
+    eventUnsubRef.current.forEach((fn) => {
+      try { fn(); } catch {}
+    });
+    eventUnsubRef.current = [];
+  };
+
+  const setupStreamingListeners = async () => {
+    clearEventListeners();
+    // Preemptively show streaming state
+    setIsStreaming(true);
+    const unStarted = await listen('kafka:load_started', () => {
+      setIsStreaming(true);
+    });
+    const unMsg = await listen('kafka:message', async (event) => {
+      const msg: any = event.payload as any;
+      setBuffer((prev) => [...prev, msg]);
+      const errText = (msg?.decoding_error || msg?.decodingError) as string | undefined;
+      if (errText && !hasShownDecodeErrorRef.current) {
+        hasShownDecodeErrorRef.current = true;
+        try {
+          await showDialog(`Некоторые сообщения не удалось декодировать. Показан текстовый формат.\nПервая ошибка: ${errText}`, { title: 'Ошибка декодирования Protobuf', kind: 'error' });
+        } catch {}
+      }
+    });
+    const finish = () => {
+      setIsStreaming(false);
+      clearEventListeners();
+    };
+    const unDone = await listen('kafka:load_done', finish);
+    const unCancelled = await listen('kafka:load_cancelled', finish);
+    eventUnsubRef.current.push(unStarted, unMsg, unDone, unCancelled);
+  };
+
   const handleRefresh = async () => {
     if (!currentConfig) return;
     // Apply pending filters if they differ from applied
@@ -147,11 +185,43 @@ export default function App() {
       const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to apply filters');
       await showDialog(text, { title: 'Apply Filters Error', kind: 'error' });
     }
-    // Reset local buffer and fetch fresh batch from current consumer position
+    // Reset local buffer first
     setBuffer([]);
     setCurrentPage(1);
-    await fetchNextBatch();
+    hasShownDecodeErrorRef.current = false;
+
+    const hasTextFilters = !!(pendingFilters.keyFilter?.trim() || pendingFilters.messageFilter?.trim());
+    if (hasTextFilters) {
+      await setupStreamingListeners();
+      try {
+        await invoke('start_filtered_load', {
+          args: {
+            limit: 200,
+            key_filter: pendingFilters.keyFilter || '',
+            message_filter: pendingFilters.messageFilter || '',
+          },
+        });
+      } catch (e: any) {
+        console.error('Failed to start filtered load', e);
+        const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to start filtered load');
+        await showDialog(text, { title: 'Start Filtered Load Error', kind: 'error' });
+        setIsStreaming(false);
+        clearEventListeners();
+      }
+    } else {
+      await fetchNextBatch();
+    }
   };
+
+  const handleCancel = async () => {
+    try { await invoke('cancel_filtered_load'); } catch {}
+    setIsStreaming(false);
+    clearEventListeners();
+  };
+
+  useEffect(() => {
+    return () => { clearEventListeners(); };
+  }, []);
 
   const toggleConnection = () => {
     setIsConnected(!isConnected);
@@ -207,6 +277,8 @@ export default function App() {
           <FilterPanel 
             onFilterChange={handleFilterChange}
             onRefresh={handleRefresh}
+            onCancel={handleCancel}
+            isStreaming={isStreaming}
             currentConfig={currentConfig}
             partitions={partitions}
             refreshDisabled={!isDirty}

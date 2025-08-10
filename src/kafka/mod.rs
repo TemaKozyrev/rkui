@@ -224,7 +224,7 @@ impl Kafka {
     }
 
     /// Ensure we are assigned to the desired partitions with proper starting offsets.
-    fn ensure_assigned(&self) -> anyhow::Result<()> {
+    pub(crate) fn ensure_assigned(&self) -> anyhow::Result<()> {
         if self.assigned.swap(true, Ordering::SeqCst) {
             return Ok(()); // already assigned
         }

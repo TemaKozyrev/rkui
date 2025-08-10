@@ -2,11 +2,19 @@ use std::sync::{Arc, Mutex};
 
 use crate::kafka::{Kafka, KafkaConfig};
 
+/// Cancellation session for an in-flight streaming load.
+#[derive(Clone)]
+pub struct LoadSession {
+    pub cancel_tx: tokio::sync::broadcast::Sender<()>,
+}
+
 /// Global application state shared with Tauri commands.
 #[derive(Clone)]
 pub struct AppState {
     /// Kafka reader instance; None until configured from the UI.
     pub kafka: Arc<Mutex<Option<Kafka>>>,
+    /// Current streaming load session (if any).
+    pub load_session: Arc<Mutex<Option<LoadSession>>>,
 }
 
 impl AppState {
@@ -14,6 +22,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             kafka: Arc::new(Mutex::new(None)),
+            load_session: Arc::new(Mutex::new(None)),
         }
     }
 

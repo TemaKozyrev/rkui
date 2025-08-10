@@ -19,6 +19,8 @@ fn main() {
             kafka_adapter::get_topic_partitions,
             kafka_adapter::apply_filters,
             kafka_adapter::consume_next_messages,
+            kafka_adapter::start_filtered_load,
+            kafka_adapter::cancel_filtered_load,
             proto_decoder::parse_proto_metadata,
         ])
         .run(tauri::generate_context!())

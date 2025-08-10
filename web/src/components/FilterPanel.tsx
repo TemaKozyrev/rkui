@@ -3,11 +3,13 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Loader2, XCircle } from "lucide-react";
 
 interface FilterPanelProps {
   onFilterChange: (filters: any) => void;
   onRefresh: () => void;
+  onCancel?: () => void;
+  isStreaming?: boolean;
   currentConfig?: any;
   partitions?: number[];
   refreshDisabled?: boolean;
@@ -15,7 +17,7 @@ interface FilterPanelProps {
   selectedStartFrom?: 'oldest' | 'newest';
 }
 
-export function FilterPanel({ onFilterChange, onRefresh, currentConfig, partitions = [], refreshDisabled = false, selectedPartition = 'all', selectedStartFrom = 'oldest' }: FilterPanelProps) {
+export function FilterPanel({ onFilterChange, onRefresh, onCancel, isStreaming = false, currentConfig, partitions = [], refreshDisabled = false, selectedPartition = 'all', selectedStartFrom = 'oldest' }: FilterPanelProps) {
   return (
     <div className="w-80 bg-muted/30 p-6 space-y-4">
       <Card>
@@ -103,13 +105,27 @@ export function FilterPanel({ onFilterChange, onRefresh, currentConfig, partitio
               onChange={(e) => onFilterChange({ messageFilter: e.target.value })}
             />
           </div>
+
+          {isStreaming && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-xs">Loading filtered messages…</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      <Button className="w-full gap-2" onClick={onRefresh} disabled={refreshDisabled}>
-        <RefreshCw className="h-4 w-4" />
-        Refresh Messages
-      </Button>
+      {isStreaming ? (
+        <Button className="w-full gap-2" variant="destructive" onClick={onCancel}>
+          <XCircle className="h-4 w-4" />
+          Cancel
+        </Button>
+      ) : (
+        <Button className="w-full gap-2" onClick={onRefresh} disabled={refreshDisabled}>
+          <RefreshCw className="h-4 w-4" />
+          Refresh Messages
+        </Button>
+      )}
     </div>
   );
 }
