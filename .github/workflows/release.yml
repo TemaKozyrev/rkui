@@ -39,6 +39,60 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Update versions from tag
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ github.ref_name }}}"
+          VERSION="${TAG#v}"
+          export VERSION
+          echo "Release tag: '${TAG}'"
+          echo "Computed version: '${VERSION}'"
+          if [ -z "${VERSION}" ]; then
+            echo "VERSION is empty; aborting" >&2
+            exit 1
+          fi
+          # Validate semver-like pattern (basic)
+          if ! echo "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "Tag '${TAG}' does not contain a semver prefix like X.Y.Z" >&2
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require('fs');
+          const version = process.env.VERSION;
+          // Update tauri.conf.json
+          const tauriPath = 'tauri.conf.json';
+          let tj = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
+          tj.version = version;
+          fs.writeFileSync(tauriPath, JSON.stringify(tj, null, 2) + '\n');
+          console.log(`Updated ${tauriPath} to version ${version}`);
+
+          // Update Cargo.toml in [package] section only
+          const cargoPath = 'Cargo.toml';
+          let toml = fs.readFileSync(cargoPath, 'utf8');
+          const pkgStart = toml.indexOf('[package]');
+          if (pkgStart === -1) {
+            throw new Error('No [package] section found in Cargo.toml');
+          }
+          const rest = toml.slice(pkgStart + '[package]'.length);
+          const nextSectionRel = rest.indexOf('\n[');
+          const sectionEnd = nextSectionRel === -1 ? toml.length : (pkgStart + '[package]'.length + nextSectionRel);
+          const before = toml.slice(0, pkgStart);
+          let section = toml.slice(pkgStart, sectionEnd);
+
+          if (/^([\s\S]*?)(\nversion\s*=\s*"[^"]+")/m.test(section)) {
+            section = section.replace(/(\n)version\s*=\s*"[^"]+"/, `$1version = "${version}"`);
+          } else {
+            // Insert version under the [package] header
+            section = section.replace(/\[package\][^\n]*\n/, (m) => m + `version = "${version}"\n`);
+          }
+          const after = toml.slice(sectionEnd);
+          fs.writeFileSync(cargoPath, before + section + after);
+          console.log(`Updated ${cargoPath} to version ${version}`);
+          NODE
+
+          echo "--- Diff after version bump ---"
+          git diff -- tauri.conf.json Cargo.toml || true
+
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |

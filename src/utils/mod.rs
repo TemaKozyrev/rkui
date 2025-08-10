@@ -1,10 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use protobuf::descriptor::{FileDescriptorProto, FileDescriptorSet};
 use protobuf::reflect::FileDescriptor;
-use protobuf::Message;
 
 /// Collect unique parent directories from a list of file paths.
 pub fn unique_parent_dirs(files: &[String]) -> Vec<PathBuf> {
@@ -17,7 +15,7 @@ pub fn unique_parent_dirs(files: &[String]) -> Vec<PathBuf> {
     set.into_iter().collect()
 }
 
-/// Run vendored protoc on provided .proto files and return parsed FileDescriptorSet.
+/// Parse .proto files using pure-Rust parser (no external protoc) and return FileDescriptorSet.
 pub fn run_protoc_and_read_descriptor_set(files: &[String]) -> Result<FileDescriptorSet, String> {
     if files.is_empty() {
         return Err("No .proto files provided".into());
@@ -28,38 +26,25 @@ pub fn run_protoc_and_read_descriptor_set(files: &[String]) -> Result<FileDescri
         }
     }
 
-    let protoc_path = protoc_bin_vendored::protoc_bin_path()
-        .map_err(|e| format!("Failed to locate protoc: {e}"))?;
-    let tmp = tempfile::NamedTempFile::new()
-        .map_err(|e| format!("Failed to create temp file: {e}"))?;
-    let out_path = tmp.path().to_path_buf();
-
+    // Collect include directories from provided files so imports can be resolved
     let include_dirs = unique_parent_dirs(files);
 
-    let mut cmd = Command::new(protoc_path);
-    cmd.arg("--include_imports");
-    cmd.arg(format!("--descriptor_set_out={}", out_path.display()))
-        ;
-    for inc in &include_dirs {
-        cmd.arg("-I");
-        cmd.arg(inc);
-    }
-    for f in files {
-        cmd.arg(f);
-    }
+    // Use protobuf-parse (pure Rust) to parse and typecheck the .proto files
+    let mut parser = protobuf_parse::Parser::new();
+    parser
+        .includes(include_dirs.iter().map(|p| p.as_path()))
+        .inputs(files.iter().map(|s| Path::new(s)));
 
-    let output = cmd.output().map_err(|e| format!("Failed to run protoc: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let first_line = stderr.lines().next().unwrap_or_default().trim();
-        return Err(format!("protoc failed: {}", first_line));
-    }
+    let parsed = parser
+        .parse_and_typecheck()
+        .map_err(|e| format!("Failed to parse .proto files: {e}"))?;
 
-    let bytes = std::fs::read(&out_path)
-        .map_err(|e| format!("Failed to read descriptor set: {e}"))?;
-    let fds: FileDescriptorSet = Message::parse_from_bytes(&bytes)
-        .map_err(|e| format!("Failed to parse descriptor set (protobuf): {e}"))?;
-    Ok(fds)
+    // Build FileDescriptorSet from parsed descriptors
+    let set = FileDescriptorSet {
+        file: parsed.file_descriptors, // Vec<FileDescriptorProto>
+        ..Default::default()
+    };
+    Ok(set)
 }
 
 /// Link FileDescriptorProto entries into reflect::FileDescriptor graph, resolving dependencies.
