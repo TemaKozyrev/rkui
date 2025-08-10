@@ -41,6 +41,9 @@ pub struct KafkaConfig {
     pub partition: Option<String>,
     /// Starting offset for a specific partition (ignored when partition == "all")
     pub start_offset: Option<i64>,
+    /// Start position preference: "oldest" (default) or "newest"
+    #[serde(rename = "start_from", alias = "startFrom")]
+    pub start_from: Option<String>,
     /// Optional path to proto schema (future use)
     pub proto_schema_path: Option<String>,
     /// Optional fully qualified proto message name selected in UI
@@ -65,6 +68,7 @@ impl Default for KafkaConfig {
             message_type: MessageType::Json,
             partition: None,
             start_offset: None,
+            start_from: Some("oldest".into()),
             proto_schema_path: None,
             proto_message_full_name: None,
         }
@@ -204,9 +208,10 @@ impl Kafka {
     }
 
     /// Apply partition/offset filters and reset internal reading state.
-    pub fn apply_filters_mut(&mut self, partition: Option<String>, start_offset: Option<i64>) -> anyhow::Result<()> {
+    pub fn apply_filters_mut(&mut self, partition: Option<String>, start_offset: Option<i64>, start_from: Option<String>) -> anyhow::Result<()> {
         self.config.partition = partition;
         self.config.start_offset = start_offset;
+        self.config.start_from = start_from.or_else(|| self.config.start_from.clone());
         // Reset assignment state so next consume will reassign
         self.assigned.store(false, Ordering::SeqCst);
         self.end_offsets.lock().map_err(|e| anyhow::anyhow!("State lock poisoned (end_offsets): {e}"))?.clear();
@@ -270,8 +275,14 @@ impl Kafka {
         // Assign explicit starting offsets based on selected partition and requested start_offset
         let mut tpl = TopicPartitionList::new();
         let is_all = self.config.partition.as_deref().map(|s| s == "all").unwrap_or(true);
+        let newest = self.config.start_from.as_deref().map(|s| s.eq_ignore_ascii_case("newest")).unwrap_or(false);
+        const BACK_WINDOW: i64 = 2000; // how many latest offsets to read back from end when starting from newest
         for p in partitions {
-            let off = if is_all {
+            let off = if newest {
+                let (low, high) = self.consumer.fetch_watermarks(topic, p, Duration::from_secs(5))?;
+                let start = if high > BACK_WINDOW { high - BACK_WINDOW } else { low };
+                Offset::Offset(start)
+            } else if is_all {
                 // When reading all partitions, ignore start_offset and begin from earliest for each
                 Offset::Beginning
             } else {
@@ -295,11 +306,20 @@ impl Kafka {
         self.ensure_assigned()?;
         let ends = self.end_offsets.lock().map_err(|e| anyhow::anyhow!("State lock poisoned (end_offsets): {e}"))?.clone();
         let parts = self.partitions.lock().map_err(|e| anyhow::anyhow!("State lock poisoned (partitions): {e}"))?.clone();
-        // If already done on all partitions, return immediately
+        // If all partitions are marked done, return only when internal buffers are fully drained.
         {
-            let done = self.done_partitions.lock().map_err(|e| anyhow::anyhow!("State lock poisoned (done_partitions): {e}"))?;
-            if parts.iter().all(|p| done.contains(p)) {
-                return Ok(Vec::new());
+            let all_done = {
+                let done = self.done_partitions.lock().map_err(|e| anyhow::anyhow!("State lock poisoned (done_partitions): {e}"))?;
+                parts.iter().all(|p| done.contains(p))
+            };
+            if all_done {
+                let has_buffered = {
+                    let bufs = self.buffers.lock().map_err(|e| anyhow::anyhow!("State lock poisoned (buffers): {e}"))?;
+                    bufs.values().any(|q| !q.is_empty())
+                };
+                if !has_buffered {
+                    return Ok(Vec::new());
+                }
             }
         }
 

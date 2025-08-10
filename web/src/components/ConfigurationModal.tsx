@@ -53,14 +53,26 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
   const handlePickProtoFile = async () => {
     try {
       const selected = await openDialog({ filters: [{ name: 'Proto', extensions: ['proto'] }], multiple: true });
+      let incoming: string[] = [];
       if (typeof selected === 'string') {
-        setProtoFiles([selected]);
-        setConfig(prev => ({ ...prev, protoSchemaPath: selected, protoFiles: [selected] }));
+        incoming = [selected];
       } else if (Array.isArray(selected)) {
-        const files = selected.filter((x): x is string => typeof x === 'string');
-        setProtoFiles(files);
-        setConfig(prev => ({ ...prev, protoSchemaPath: files[0], protoFiles: files }));
+        incoming = selected.filter((x): x is string => typeof x === 'string');
+      } else {
+        return;
       }
+      if (incoming.length === 0) return;
+      // Merge with already selected files and skip duplicates
+      const mergedSet = new Set<string>(protoFiles);
+      for (const f of incoming) {
+        mergedSet.add(f);
+      }
+      const merged = Array.from(mergedSet);
+      setProtoFiles(merged);
+      setConfig(prev => {
+        const nextProtoSchemaPath = prev.protoSchemaPath || merged[0];
+        return { ...prev, protoSchemaPath: nextProtoSchemaPath, protoFiles: merged };
+      });
     } catch (e: any) {
       console.error('Failed to pick proto file(s)', e);
       const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to open file dialog');
@@ -93,6 +105,13 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     } finally {
       setIsParsingProto(false);
     }
+  };
+
+  const handleCleanProto = () => {
+    setProtoFiles([]);
+    setParsedMessages([]);
+    setParseError(null);
+    setConfig(prev => ({ ...prev, protoSchemaPath: undefined, protoFiles: [], protoSelectedMessage: undefined }));
   };
 
   const handleSave = () => {
@@ -339,6 +358,9 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                     <div className="flex items-center gap-2">
                       <Button onClick={handleLoadProtoMetadata} disabled={protoFiles.length === 0 || isParsingProto}>
                         {isParsingProto ? 'Loading…' : 'Load'}
+                      </Button>
+                      <Button variant="outline" onClick={handleCleanProto} disabled={isParsingProto || (protoFiles.length === 0 && parsedMessages.length === 0 && !config.protoSelectedMessage)}>
+                        Clean
                       </Button>
                       {isParsingProto && (
                         <div className="text-sm text-muted-foreground">Parsing schemas…</div>

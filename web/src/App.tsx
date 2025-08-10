@@ -31,13 +31,15 @@ export default function App() {
   const [messageDetailOpen, setMessageDetailOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [partitions, setPartitions] = useState<number[]>([]);
-  const [appliedFilters, setAppliedFilters] = useState<{ partition: string; startOffset: number }>({
+  const [appliedFilters, setAppliedFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest' }>({
     partition: 'all',
     startOffset: 0,
+    startFrom: 'oldest',
   });
-  const [pendingFilters, setPendingFilters] = useState<{ partition: string; startOffset: number }>({
+  const [pendingFilters, setPendingFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest' }>({
     partition: 'all',
     startOffset: 0,
+    startFrom: 'oldest',
   });
 
   const totalPages = Math.max(1, Math.ceil(buffer.length / PAGE_SIZE));
@@ -108,7 +110,7 @@ export default function App() {
       setBuffer([]);
       setCurrentPage(1);
       // Reset filters to defaults on new configuration
-      const defaults = { partition: 'all', startOffset: 0 };
+      const defaults: { partition: string; startOffset: number; startFrom: 'oldest' | 'newest' } = { partition: 'all', startOffset: 0, startFrom: 'oldest' };
       setAppliedFilters(defaults);
       setPendingFilters(defaults);
       await fetchNextBatch();
@@ -135,6 +137,7 @@ export default function App() {
           args: {
             partition: pendingFilters.partition,
             start_offset: pendingFilters.startOffset,
+            start_from: pendingFilters.startFrom,
           },
         });
         setAppliedFilters(pendingFilters);
@@ -208,6 +211,7 @@ export default function App() {
             partitions={partitions}
             refreshDisabled={!isDirty}
             selectedPartition={pendingFilters.partition}
+            selectedStartFrom={pendingFilters.startFrom}
           />
         )}
         

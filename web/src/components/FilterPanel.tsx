@@ -12,9 +12,10 @@ interface FilterPanelProps {
   partitions?: number[];
   refreshDisabled?: boolean;
   selectedPartition?: string;
+  selectedStartFrom?: 'oldest' | 'newest';
 }
 
-export function FilterPanel({ onFilterChange, onRefresh, currentConfig, partitions = [], refreshDisabled = false, selectedPartition = 'all' }: FilterPanelProps) {
+export function FilterPanel({ onFilterChange, onRefresh, currentConfig, partitions = [], refreshDisabled = false, selectedPartition = 'all', selectedStartFrom = 'oldest' }: FilterPanelProps) {
   return (
     <div className="w-80 bg-muted/30 p-6 space-y-4">
       <Card>
@@ -29,6 +30,26 @@ export function FilterPanel({ onFilterChange, onRefresh, currentConfig, partitio
             {currentConfig?.sslEnabled && (
               <div><strong>SSL:</strong> Enabled</div>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Start From</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div>
+            <Label htmlFor="start-from-select">Start position</Label>
+            <Select value={selectedStartFrom} onValueChange={(value) => onFilterChange({ startFrom: value as 'oldest' | 'newest' })}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select start position" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="oldest">Oldest</SelectItem>
+                <SelectItem value="newest">Newest</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>

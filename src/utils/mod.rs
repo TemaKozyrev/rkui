@@ -63,22 +63,60 @@ pub fn run_protoc_and_read_descriptor_set(files: &[String]) -> Result<FileDescri
 
 /// Link FileDescriptorProto entries into reflect::FileDescriptor graph, resolving dependencies.
 pub fn link_file_descriptors(fds: &FileDescriptorSet) -> Result<Vec<FileDescriptor>, String> {
+    use std::collections::{HashMap, HashSet};
+    use std::path::Path;
+
     let mut remaining: Vec<FileDescriptorProto> = fds.file.clone();
     let mut built: Vec<FileDescriptor> = Vec::new();
-    let mut built_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    // Maps for resolving dependencies among already built descriptors
+    let mut built_full: HashMap<String, usize> = HashMap::new();
+    let mut built_base: HashMap<String, usize> = HashMap::new();
+    let mut base_collisions: HashSet<String> = HashSet::new();
+
     let mut progress = true;
     while !remaining.is_empty() && progress {
         progress = false;
         let mut i = 0;
         while i < remaining.len() {
             let fd = &remaining[i];
-            let deps_ready = fd.dependency.iter().all(|dep| built_map.contains_key(dep));
+
+            // Helper to resolve a dependency path to an index of an already built descriptor
+            let resolve_dep = |dep: &str| -> Option<usize> {
+                if let Some(&idx) = built_full.get(dep) { return Some(idx); }
+                // Try by basename if unique
+                let base = Path::new(dep).file_name()?.to_string_lossy().to_string();
+                if !base_collisions.contains(&base) {
+                    if let Some(&idx) = built_base.get(&base) { return Some(idx); }
+                }
+                None
+            };
+
+            let deps_ready = fd.dependency.iter().all(|dep| resolve_dep(dep).is_some());
             if deps_ready {
-                let deps_idx: Vec<usize> = fd.dependency.iter().map(|d| built_map[d]).collect();
+                let deps_idx: Vec<usize> = fd
+                    .dependency
+                    .iter()
+                    .map(|d| resolve_dep(d).expect("dep must be ready"))
+                    .collect();
                 let deps_vec: Vec<FileDescriptor> = deps_idx.iter().map(|&idx| built[idx].clone()).collect();
                 match FileDescriptor::new_dynamic(fd.clone(), deps_vec.as_slice()) {
                     Ok(fdesc) => {
-                        built_map.insert(fd.name().to_string(), built.len());
+                        // Insert into maps
+                        let full = fd.name().to_string();
+                        built_full.insert(full.clone(), built.len());
+                        if let Some(os) = Path::new(&full).file_name() {
+                            let base = os.to_string_lossy().to_string();
+                            if let Some(existing) = built_base.get(&base).copied() {
+                                if existing != built.len() {
+                                    // mark collision
+                                    built_base.remove(&base);
+                                    base_collisions.insert(base);
+                                }
+                            } else if !base_collisions.contains(&base) {
+                                built_base.insert(base, built.len());
+                            }
+                        }
                         built.push(fdesc);
                         remaining.remove(i);
                         progress = true;

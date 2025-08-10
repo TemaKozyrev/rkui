@@ -72,13 +72,55 @@ impl ProtoDecoder {
         if files.is_empty() {
             return Err("No .proto files provided".into());
         }
+
+        // Expand provided paths:
+        // - If a directory is provided, include all *.proto inside (non-recursive).
+        // - If a file is provided, include it plus all sibling *.proto files in the same directory.
+        let mut uniq: std::collections::HashSet<String> = std::collections::HashSet::new();
         for f in &files {
+            let p = Path::new(f);
+            if p.is_dir() {
+                // Canonicalize directory for stable sibling enumeration
+                let dir = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                let rd = std::fs::read_dir(&dir).map_err(|e| format!("Failed to read dir '{}': {}", dir.display(), e))?;
+                for ent in rd.filter_map(|e| e.ok()) {
+                    let path = ent.path();
+                    if path.is_file() && path.extension().map(|e| e == "proto").unwrap_or(false) {
+                        let can = std::fs::canonicalize(&path).unwrap_or(path);
+                        uniq.insert(can.to_string_lossy().to_string());
+                    }
+                }
+            } else if p.is_file() {
+                // include the file itself
+                uniq.insert(p.to_string_lossy().to_string());
+                // enumerate sibling .proto files from canonicalized directory to avoid CWD issues
+                let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                let dir = abs.parent().unwrap_or(Path::new("."));
+                if let Ok(rd) = std::fs::read_dir(dir) {
+                    for ent in rd.filter_map(|e| e.ok()) {
+                        let sp = ent.path();
+                        if sp.is_file() && sp.extension().map(|e| e == "proto").unwrap_or(false) {
+                            uniq.insert(sp.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            } else {
+                return Err(format!("File or directory not found: {}", f));
+            }
+        }
+        let mut expanded: Vec<String> = uniq.into_iter().collect();
+        expanded.sort();
+        if expanded.is_empty() {
+            return Err("No .proto files found from provided paths".into());
+        }
+        for f in &expanded {
             if !Path::new(f).exists() {
                 return Err(format!("File not found: {}", f));
             }
         }
+
         // Build descriptors using protoc-produced descriptor set and link into reflect FileDescriptor graph
-        let pb_fds: FileDescriptorSet = run_protoc_and_read_descriptor_set(&files)?;
+        let pb_fds: FileDescriptorSet = run_protoc_and_read_descriptor_set(&expanded)?;
         let built: Vec<FileDescriptor> = link_file_descriptors(&pb_fds)?;
 
         // Accept the selected message from UI as-is (normalize)
@@ -205,7 +247,13 @@ impl ProtoDecoder {
         for bytes in &views {
             match md.parse_from_bytes(bytes) {
                 Ok(msg) => match protobuf_json_mapping::print_to_string(&*msg) {
-                    Ok(json) => return Ok(json),
+                    Ok(json) => {
+                        // Ensure compact JSON without spaces by reserializing via serde_json
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
+                            return Ok(serde_json::to_string(&val).unwrap_or(json));
+                        }
+                        return Ok(json);
+                    }
                     Err(_e) => { /* keep trying other views */ }
                 },
                 Err(_e) => { /* keep trying other views */ }
@@ -218,7 +266,12 @@ impl ProtoDecoder {
         repaired.extend_from_slice(payload);
         match md.parse_from_bytes(&repaired) {
             Ok(msg) => match protobuf_json_mapping::print_to_string(&*msg) {
-                Ok(json) => return Ok(json),
+                Ok(json) => {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
+                        return Ok(serde_json::to_string(&val).unwrap_or(json));
+                    }
+                    return Ok(json);
+                }
                 Err(e) => return Err(format!("Failed to serialize protobuf JSON: {}", e)),
             },
             Err(e) => return Err(format!("Failed to parse protobuf payload as .{} (repaired): {}", name, e)),
@@ -231,15 +284,46 @@ pub async fn parse_proto_metadata(files: Vec<String>) -> Result<ProtoMetadata, S
     if files.is_empty() {
         return Err("No files provided".into());
     }
-    // Validate files exist
+
+    // Expand provided paths (mirror ProtoDecoder::from_proto_files behavior)
+    let mut uniq: std::collections::HashSet<String> = std::collections::HashSet::new();
     for f in &files {
-        if !Path::new(f).exists() {
-            return Err(format!("File not found: {}", f));
+        let p = Path::new(f);
+        if p.is_dir() {
+            // Canonicalize directory for stable sibling enumeration
+            let dir = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            let rd = std::fs::read_dir(&dir).map_err(|e| format!("Failed to read dir '{}': {}", dir.display(), e))?;
+            for ent in rd.filter_map(|e| e.ok()) {
+                let path = ent.path();
+                if path.is_file() && path.extension().map(|e| e == "proto").unwrap_or(false) {
+                    let can = std::fs::canonicalize(&path).unwrap_or(path);
+                    uniq.insert(can.to_string_lossy().to_string());
+                }
+            }
+        } else if p.is_file() {
+            uniq.insert(p.to_string_lossy().to_string());
+            if let Some(dir) = p.parent() {
+                if let Ok(rd) = std::fs::read_dir(dir) {
+                    for ent in rd.filter_map(|e| e.ok()) {
+                        let sp = ent.path();
+                        if sp.is_file() && sp.extension().map(|e| e == "proto").unwrap_or(false) {
+                            uniq.insert(sp.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        } else {
+            return Err(format!("File or directory not found: {}", f));
         }
+    }
+    let mut expanded: Vec<String> = uniq.into_iter().collect();
+    expanded.sort();
+    if expanded.is_empty() {
+        return Err("No .proto files found from provided paths".into());
     }
 
     // Build descriptor set via shared utility
-    let fds: FileDescriptorSet = run_protoc_and_read_descriptor_set(&files)?;
+    let fds: FileDescriptorSet = run_protoc_and_read_descriptor_set(&expanded)?;
 
     let mut packages_set: HashSet<String> = HashSet::new();
     let mut messages: Vec<String> = Vec::new();

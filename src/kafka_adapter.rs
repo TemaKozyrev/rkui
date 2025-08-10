@@ -12,6 +12,8 @@ pub struct ApplyFiltersArgs {
     pub partition: Option<String>,
     #[serde(rename = "start_offset", alias = "startOffset")]
     pub start_offset: Option<i64>,
+    #[serde(rename = "start_from", alias = "startFrom")]
+    pub start_from: Option<String>,
 }
 
 /// Configure Kafka connection (invoked from UI). This (re)creates a consumer.
@@ -53,7 +55,7 @@ pub async fn apply_filters(
 ) -> Result<(), String> {
     let mut guard = state.kafka.lock().map_err(|e| format!("Failed to access state: {e}"))?;
     if let Some(k) = guard.as_mut() {
-        k.apply_filters_mut(args.partition, args.start_offset)
+        k.apply_filters_mut(args.partition, args.start_offset, args.start_from)
             .map_err(|e| format!("Failed to apply filters: {e}"))
     } else {
         Err("Kafka is not configured".into())
