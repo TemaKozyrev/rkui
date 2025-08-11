@@ -10,21 +10,15 @@ serde_json = "1"
 rdkafka = { version = "0.36", features = ["ssl", "sasl"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 anyhow = "1"
-thiserror = "1"
-log = "0.4"
 env_logger = "0.11"
 chrono = { version = "0.4" }
 protobuf = "3"
-# protobuf-json-mapping was used for a prior approach; keep for now but unused
 protobuf-json-mapping = "3"
 tauri-plugin-dialog = "2"
 protobuf-parse = "3"
-protoc-bin-vendored = "3"
-tempfile = "3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-base64 = "0.21"
 
 [profile.release]
 lto = "fat"
