@@ -38,7 +38,7 @@ jobs:
             label: linux-x64
             tauri_args: ""
             rust_targets: ""
-          - os: macos-14-arm64
+          - os: macos-14
             label: macos-arm64
             tauri_args: "--target aarch64-apple-darwin"
             rust_targets: "aarch64-apple-darwin"
