@@ -98,6 +98,7 @@ export default function App() {
       message_type: config.messageType,
       proto_schema_path: config.protoSchemaPath || null,
       proto_message_full_name: config.protoSelectedMessage || null,
+      proto_descriptor_key: config.protoDescriptorKey || null,
     };
 
     try {

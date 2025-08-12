@@ -1,17 +1,24 @@
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use protobuf::descriptor::{DescriptorProto, FileDescriptorProto, FileDescriptorSet};
 use protobuf::reflect::{FileDescriptor, MessageDescriptor};
 
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
 use crate::utils::{link_file_descriptors, normalize_full_name, run_protoc_and_read_descriptor_set};
+
+static DESCR_CACHE: Lazy<Mutex<HashMap<String, Arc<Vec<FileDescriptor>>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Serialize)]
 pub struct ProtoMetadata {
     pub packages: Vec<String>,
     pub messages: Vec<String>,
+    #[serde(rename = "cache_key")]
+    pub cache_key: String,
 }
 
 
@@ -61,6 +68,7 @@ fn extract_from_file_descriptor(fd: &FileDescriptorProto, packages: &mut HashSet
 }
 
 pub struct ProtoDecoder {
+    // Parsed and typechecked descriptors (shared across decoders via cache)
     // Parsed and typechecked descriptors
     files: Vec<FileDescriptor>,
     // If provided by UI, decode using this full name
@@ -68,6 +76,11 @@ pub struct ProtoDecoder {
 }
 
 impl ProtoDecoder {
+    /// Construct a decoder from already linked descriptors (from cache)
+    pub fn from_linked_files(built: Vec<FileDescriptor>, selected_message: Option<String>) -> Arc<Self> {
+        let chosen = selected_message.map(normalize_full_name);
+        Arc::new(Self { files: built, message_full_name: chosen })
+    }
     pub fn from_proto_files(files: Vec<String>, selected_message: Option<String>) -> Result<Arc<Self>, String> {
         if files.is_empty() {
             return Err("No .proto files provided".into());
@@ -269,6 +282,15 @@ impl ProtoDecoder {
     }
 }
 
+pub fn decoder_from_cache(key: &str, selected_message: Option<String>) -> Option<Arc<ProtoDecoder>> {
+    if let Ok(guard) = DESCR_CACHE.lock() {
+        if let Some(files) = guard.get(key) {
+            return Some(ProtoDecoder::from_linked_files((**files).clone(), selected_message));
+        }
+    }
+    None
+}
+
 #[tauri::command]
 pub async fn parse_proto_metadata(files: Vec<String>) -> Result<ProtoMetadata, String> {
     if files.is_empty() {
@@ -307,6 +329,30 @@ pub async fn parse_proto_metadata(files: Vec<String>) -> Result<ProtoMetadata, S
     // Build descriptor set via shared utility
     let fds: FileDescriptorSet = run_protoc_and_read_descriptor_set(&expanded)?;
 
+    // Link to reflect descriptors and cache them
+    let built: Vec<FileDescriptor> = link_file_descriptors(&fds)?;
+
+    // Compute a cache key based on canonical paths + file metadata (size + mtime)
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::Hash;
+    use std::hash::Hasher;
+    for p in &expanded {
+        p.hash(&mut hasher);
+        if let Ok(meta) = std::fs::metadata(p) {
+            meta.len().hash(&mut hasher);
+            if let Ok(mt) = meta.modified() {
+                if let Ok(dur) = mt.duration_since(std::time::UNIX_EPOCH) {
+                    dur.as_secs().hash(&mut hasher);
+                    dur.subsec_nanos().hash(&mut hasher);
+                }
+            }
+        }
+    }
+    let cache_key = format!("pbds-{:x}", hasher.finish());
+    if let Ok(mut guard) = DESCR_CACHE.lock() {
+        guard.insert(cache_key.clone(), Arc::new(built.clone()));
+    }
+
     let mut packages_set: HashSet<String> = HashSet::new();
     let mut messages: Vec<String> = Vec::new();
 
@@ -320,5 +366,5 @@ pub async fn parse_proto_metadata(files: Vec<String>) -> Result<ProtoMetadata, S
     let mut packages: Vec<String> = packages_set.into_iter().collect();
     packages.sort();
 
-    Ok(ProtoMetadata { packages, messages })
+    Ok(ProtoMetadata { packages, messages, cache_key })
 }

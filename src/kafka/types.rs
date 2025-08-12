@@ -41,7 +41,7 @@ pub struct KafkaConfig {
     /// Start position preference: "oldest" (default) or "newest"
     #[serde(rename = "start_from", alias = "startFrom")]
     pub start_from: Option<String>,
-    /// Optional path to proto schema (future use)
+    /// Optional path to proto schema (fallback if no cached descriptors provided)
     pub proto_schema_path: Option<String>,
     /// Optional fully qualified proto message name selected in UI
     #[serde(
@@ -51,6 +51,9 @@ pub struct KafkaConfig {
         alias = "messageFullName"
     )]
     pub proto_message_full_name: Option<String>,
+    /// Optional cache key to reuse previously loaded descriptors (preferred over proto_schema_path)
+    #[serde(rename = "proto_descriptor_key", alias = "protoDescriptorKey")]
+    pub proto_descriptor_key: Option<String>,
 }
 
 impl Default for KafkaConfig {
@@ -71,6 +74,7 @@ impl Default for KafkaConfig {
             start_from: Some("oldest".into()),
             proto_schema_path: None,
             proto_message_full_name: None,
+            proto_descriptor_key: None, 
         }
     }
 }

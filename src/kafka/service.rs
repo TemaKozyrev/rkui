@@ -29,21 +29,44 @@ impl Kafka {
         let consumer = super::consumer::create_consumer(&config)?;
         // Initialize proto decoder if requested
         let proto_decoder = if matches!(config.message_type, MessageType::Protobuf) {
-            // In protobuf mode, schema path must be provided and decoder must initialize successfully
-            let path = config
-                .proto_schema_path
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!(
-                    "Protobuf message_type selected but no proto_schema_path provided"
-                ))?;
-            match crate::proto_decoder::ProtoDecoder::from_proto_files(
-                vec![path.clone()],
-                config.proto_message_full_name.clone(),
-            ) {
-                Ok(dec) => Some(dec),
-                Err(e) => {
-                    // Convert initialization failure into a hard error so UI gets it
-                    return Err(anyhow::anyhow!("Failed to initialize proto decoder: {}", e));
+            // Prefer using cached descriptors (by key) if provided by UI
+            if let Some(key) = config.proto_descriptor_key.as_ref() {
+                if let Some(dec) = crate::proto_decoder::decoder_from_cache(key, config.proto_message_full_name.clone()) {
+                    Some(dec)
+                } else {
+                    // Fall back to proto files path if cache miss
+                    let path = config
+                        .proto_schema_path
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "Protobuf message_type selected but neither valid proto_descriptor_key nor proto_schema_path provided"
+                        ))?;
+                    match crate::proto_decoder::ProtoDecoder::from_proto_files(
+                        vec![path.clone()],
+                        config.proto_message_full_name.clone(),
+                    ) {
+                        Ok(dec) => Some(dec),
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("Failed to initialize proto decoder: {}", e));
+                        }
+                    }
+                }
+            } else {
+                // No cache key: require proto path and build
+                let path = config
+                    .proto_schema_path
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Protobuf message_type selected but no proto_schema_path provided"
+                    ))?;
+                match crate::proto_decoder::ProtoDecoder::from_proto_files(
+                    vec![path.clone()],
+                    config.proto_message_full_name.clone(),
+                ) {
+                    Ok(dec) => Some(dec),
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to initialize proto decoder: {}", e));
+                    }
                 }
             }
         } else {
