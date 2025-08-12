@@ -32,12 +32,12 @@ export default function App() {
   const [messageDetailOpen, setMessageDetailOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [partitions, setPartitions] = useState<number[]>([]);
-  const [appliedFilters, setAppliedFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest'; keyFilter?: string; messageFilter?: string }>({
+  const [appliedFilters, setAppliedFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest'; keyFilter?: string; messageFilter?: string; messageFilterMode?: 'plain' | 'jq' }>({
     partition: 'all',
     startOffset: 0,
     startFrom: 'oldest',
   });
-  const [pendingFilters, setPendingFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest'; keyFilter?: string; messageFilter?: string }>({
+  const [pendingFilters, setPendingFilters] = useState<{ partition: string; startOffset: number; startFrom: 'oldest' | 'newest'; keyFilter?: string; messageFilter?: string; messageFilterMode?: 'plain' | 'jq' }>({
     partition: 'all',
     startOffset: 0,
     startFrom: 'oldest',
@@ -118,7 +118,7 @@ export default function App() {
       setBuffer([]);
       setCurrentPage(1);
       // Reset filters to defaults on new configuration
-      const defaults: { partition: string; startOffset: number; startFrom: 'oldest' | 'newest' } = { partition: 'all', startOffset: 0, startFrom: 'oldest' };
+      const defaults: { partition: string; startOffset: number; startFrom: 'oldest' | 'newest'; messageFilterMode?: 'plain' | 'jq' } = { partition: 'all', startOffset: 0, startFrom: 'oldest', messageFilterMode: 'plain' };
       setAppliedFilters(defaults);
       setPendingFilters(defaults);
       await fetchNextBatch();
@@ -203,6 +203,7 @@ export default function App() {
             limit: 200,
             key_filter: pendingFilters.keyFilter || '',
             message_filter: pendingFilters.messageFilter || '',
+            message_filter_mode: pendingFilters.messageFilterMode || 'plain',
           },
         });
       } catch (e: any) {
@@ -288,6 +289,8 @@ export default function App() {
             refreshDisabled={!isDirty}
             selectedPartition={pendingFilters.partition}
             selectedStartFrom={pendingFilters.startFrom}
+            messageFilter={pendingFilters.messageFilter || ''}
+            messageFilterMode={pendingFilters.messageFilterMode || 'plain'}
           />
         )}
         

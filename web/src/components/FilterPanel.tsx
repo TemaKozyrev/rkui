@@ -5,6 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { RefreshCw, Loader2, XCircle } from "lucide-react";
 
+import { useState } from "react";
+import { MessageFilterModal } from "./MessageFilterModal";
+
 interface FilterPanelProps {
   onFilterChange: (filters: any) => void;
   onRefresh: () => void;
@@ -15,9 +18,12 @@ interface FilterPanelProps {
   refreshDisabled?: boolean;
   selectedPartition?: string;
   selectedStartFrom?: 'oldest' | 'newest';
+  messageFilter?: string;
+  messageFilterMode?: 'plain' | 'jq';
 }
 
-export function FilterPanel({ onFilterChange, onRefresh, onCancel, isStreaming = false, currentConfig, partitions = [], refreshDisabled = false, selectedPartition = 'all', selectedStartFrom = 'oldest' }: FilterPanelProps) {
+export function FilterPanel({ onFilterChange, onRefresh, onCancel, isStreaming = false, currentConfig, partitions = [], refreshDisabled = false, selectedPartition = 'all', selectedStartFrom = 'oldest', messageFilter = '', messageFilterMode = 'plain' }: FilterPanelProps) {
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
   return (
     <div className="w-80 bg-muted/30 p-6 space-y-4">
       <Card>
@@ -97,13 +103,22 @@ export function FilterPanel({ onFilterChange, onRefresh, onCancel, isStreaming =
             />
           </div>
           
-          <div>
-            <Label htmlFor="message-filter">Message Filter</Label>
-            <Input 
-              id="message-filter" 
-              placeholder="Filter by content"
-              onChange={(e) => onFilterChange({ messageFilter: e.target.value })}
-            />
+          <div className="space-y-2">
+            <Label>Message Filter</Label>
+            <div className="text-xs text-muted-foreground">
+              Mode: <span className="font-mono">{messageFilterMode}</span>
+              {messageFilter?.trim() ? (
+                <>
+                  , Expression:
+                  <div className="mt-1 p-2 rounded bg-muted/50 text-[11px] font-mono break-words whitespace-pre-wrap max-h-24 overflow-auto border">
+                    {messageFilter}
+                  </div>
+                </>
+              ) : (
+                <span className="ml-1">(not set)</span>
+              )}
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setFilterModalOpen(true)}>Edit Message Filter…</Button>
           </div>
 
           {isStreaming && (
@@ -126,6 +141,14 @@ export function FilterPanel({ onFilterChange, onRefresh, onCancel, isStreaming =
           Refresh Messages
         </Button>
       )}
+
+      <MessageFilterModal
+        open={filterModalOpen}
+        onOpenChange={setFilterModalOpen}
+        mode={messageFilterMode}
+        value={messageFilter || ''}
+        onSave={({ mode, value }) => onFilterChange({ messageFilterMode: mode, messageFilter: value })}
+      />
     </div>
   );
 }

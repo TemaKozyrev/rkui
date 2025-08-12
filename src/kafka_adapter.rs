@@ -1,5 +1,5 @@
 use tauri::{State, Window, Emitter};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use rdkafka::consumer::Consumer;
 
 use crate::app::{AppState, LoadSession};
@@ -77,6 +77,18 @@ pub async fn consume_next_messages(state: State<'_, AppState>, limit: Option<usi
 
 use tokio::sync::broadcast;
 
+// jq/jaq support via jq-rs
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+pub enum FilterMode {
+    #[serde(rename = "plain")] Plain,
+    #[serde(rename = "jq")] Jq,
+}
+
+impl Default for FilterMode {
+    fn default() -> Self { FilterMode::Plain }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct StartFilteredLoadArgs {
     pub limit: Option<usize>,
@@ -84,17 +96,85 @@ pub struct StartFilteredLoadArgs {
     pub key_filter: Option<String>,
     #[serde(rename = "message_filter", alias = "messageFilter")]
     pub message_filter: Option<String>,
+    #[serde(rename = "message_filter_mode", alias = "messageFilterMode")]
+    pub message_filter_mode: Option<FilterMode>,
 }
 
-fn matches_filters(key: &str, msg: &str, key_filter: &Option<String>, msg_filter: &Option<String>) -> bool {
-    let mut ok = true;
-    if let Some(kf) = key_filter.as_ref().and_then(|s| if s.is_empty() { None } else { Some(s) }) {
-        ok &= key.to_lowercase().contains(&kf.to_lowercase());
+
+fn eval_jq_bool(program: &str, value: &serde_json::Value) -> Result<bool, String> {
+    // Minimal jq-like evaluator without external/system dependencies.
+    // Supported forms:
+    // - ".a.b" -> true if value at path is boolean true
+    // - ".a.b == <literal>" -> true if equal (literal parsed as JSON if possible, or as string)
+    // - "true" -> true
+    let src = program.trim();
+    if src == "true" { return Ok(true); }
+
+    // Split by '==' if present (simple, not handling complex jq syntax)
+    if let Some(idx) = src.find("==") {
+        let (left, right) = src.split_at(idx);
+        let left = left.trim();
+        let right = right.trim_start_matches("==").trim();
+        let lv = json_path_get(value, left).ok_or_else(|| "jq path not found".to_string())?;
+        // Try parse right as JSON literal
+        let rv: serde_json::Value = match serde_json::from_str(right) {
+            Ok(v) => v,
+            Err(_) => {
+                // strip optional surrounding quotes
+                let r = right.trim();
+                let r = r.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(r);
+                serde_json::Value::String(r.to_string())
+            }
+        };
+        return Ok(lv == rv);
     }
-    if let Some(mf) = msg_filter.as_ref().and_then(|s| if s.is_empty() { None } else { Some(s) }) {
-        ok &= msg.to_lowercase().contains(&mf.to_lowercase());
+
+    // Path-only form
+    if src.starts_with('.') {
+        if let Some(v) = json_path_get(value, src) {
+            return Ok(v == serde_json::Value::Bool(true));
+        } else {
+            return Ok(false);
+        }
     }
-    ok
+
+    // Unsupported expression -> treat as non-match
+    Err("unsupported jq expression".into())
+}
+
+fn json_path_get<'a>(root: &'a serde_json::Value, path: &str) -> Option<serde_json::Value> {
+    // path like .a.b[0].c
+    if !path.starts_with('.') { return None; }
+    let mut cur = root;
+    let mut idx = 1usize; // skip leading '.'
+    while idx < path.len() {
+        // parse key up to next '.' or '['
+        let bytes = path.as_bytes();
+        let mut j = idx;
+        while j < bytes.len() && bytes[j] != b'.' && bytes[j] != b'[' { j += 1; }
+        if j > idx {
+            let key = &path[idx..j];
+            cur = cur.get(key)?;
+        }
+        idx = j;
+        if idx >= bytes.len() { break; }
+        if bytes[idx] == b'.' { idx += 1; continue; }
+        // handle [n]
+        if bytes[idx] == b'[' {
+            idx += 1;
+            // read number
+            let mut k = idx;
+            while k < bytes.len() && bytes[k].is_ascii_digit() { k += 1; }
+            if k == idx { return None; }
+            let n: usize = path[idx..k].parse().ok()?;
+            if k >= bytes.len() || bytes[k] != b']' { return None; }
+            cur = cur.get(n)?;
+            idx = k + 1;
+            if idx < bytes.len() && bytes[idx] == b'.' { idx += 1; }
+            continue;
+        }
+    }
+    Some(cur.clone())
 }
 
 #[tauri::command]
@@ -149,11 +229,17 @@ pub async fn start_filtered_load(window: Window, state: State<'_, AppState>, arg
         *sess_guard = Some(LoadSession { cancel_tx: tx.clone() });
         drop(sess_guard);
 
+        // Snapshot filter settings
+        let filter_mode = args.message_filter_mode.unwrap_or(FilterMode::Plain);
+        let key_filter = args.key_filter.clone();
+        let msg_filter = args.message_filter.clone();
+
         // Emit started event
         let _ = window.emit("kafka:load_started", &serde_json::json!({
             "limit": limit,
-            "keyFilter": args.key_filter,
-            "messageFilter": args.message_filter,
+            "keyFilter": key_filter,
+            "messageFilter": msg_filter,
+            "messageFilterMode": filter_mode,
         }));
 
         let mut rx = tx.subscribe();
@@ -216,7 +302,33 @@ pub async fn start_filtered_load(window: Window, state: State<'_, AppState>, arg
                         }
 
                         // Apply filters and emit if matched
-                        if matches_filters(&key_s, &payload_s, &args.key_filter, &args.message_filter) {
+                        let mut pass = true;
+                        // Key filter (plain contains)
+                        if let Some(kf) = key_filter.as_ref().and_then(|s| if s.is_empty() { None } else { Some(s) }) {
+                            pass &= key_s.to_lowercase().contains(&kf.to_lowercase());
+                        }
+                        // Message filter: jq or plain contains
+                        if pass {
+                            if let Some(mf) = msg_filter.as_ref().and_then(|s| if s.is_empty() { None } else { Some(s) }) {
+                                match filter_mode {
+                                    FilterMode::Jq => {
+                                        // Try parse as JSON and evaluate; if parsing fails or eval is false, drop
+                                        match serde_json::from_str::<serde_json::Value>(&payload_s) {
+                                            Ok(val) => match eval_jq_bool(mf, &val) {
+                                                Ok(true) => { /* keep pass = true */ }
+                                                _ => { pass = false; }
+                                            },
+                                            Err(_) => { pass = false; }
+                                        }
+                                    }
+                                    FilterMode::Plain => {
+                                        pass &= payload_s.to_lowercase().contains(&mf.to_lowercase());
+                                    }
+                                }
+                            }
+                        }
+
+                        if pass {
                             let ts_str = match m.timestamp() {
                                 rdkafka::message::Timestamp::NotAvailable => String::new(),
                                 rdkafka::message::Timestamp::CreateTime(ms)
