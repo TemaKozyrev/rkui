@@ -4,6 +4,56 @@
 use std::io::Write;
 use std::path::Path;
 use base64::Engine;
+use openssl::pkcs12::Pkcs12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyStoreKind {
+    PemOrDir,
+    JksOrJceks,
+    Pkcs12,
+    Unknown,
+}
+
+/// Detect keystore format primarily by file extension.
+/// Additionally, if extension is .jks, inspect its contents to distinguish legacy JKS/JCEKS vs PKCS#12 saved with .jks.
+pub(crate) fn detect_keystore_kind(path: &str) -> KeyStoreKind {
+    let p = Path::new(path);
+    if let Ok(meta) = std::fs::metadata(p) {
+        if meta.is_dir() { return KeyStoreKind::PemOrDir; }
+    }
+    let lower = path.to_ascii_lowercase();
+    // Treat common PEM-like extensions as PEM/dir
+    if lower.ends_with(".pem") || lower.ends_with(".crt") || lower.ends_with(".cer") || lower.ends_with(".bundle") {
+        return KeyStoreKind::PemOrDir;
+    }
+    if lower.ends_with(".p12") || lower.ends_with(".pfx") {
+        return KeyStoreKind::Pkcs12;
+    }
+    if lower.ends_with(".jceks") {
+        return KeyStoreKind::JksOrJceks;
+    }
+    if lower.ends_with(".jks") {
+        // Parse file to check actual keystore type: legacy JKS/JCEKS starts with 0xFEED_FEED, otherwise it might be PKCS#12
+        if let Ok(mut f) = std::fs::File::open(p) {
+            use std::io::Read;
+            let mut hdr = [0u8; 4];
+            if f.read(&mut hdr).ok().filter(|&n| n == 4).is_some() {
+                let magic = u32::from_be_bytes(hdr);
+                if magic == 0xFEED_FEED {
+                    return KeyStoreKind::JksOrJceks;
+                }
+            }
+        }
+        // Not a JKS header; try PKCS#12 parser to verify if it's actually PKCS#12 stored as .jks
+        if let Ok(bytes) = std::fs::read(p) {
+            if Pkcs12::from_der(&bytes).is_ok() {
+                return KeyStoreKind::Pkcs12;
+            }
+        }
+        return KeyStoreKind::Unknown;
+    }
+    KeyStoreKind::Unknown
+}
 
 // Prefer minijks for JKS/JCEKS truststore parsing when available
 pub(crate) fn jks_truststore_to_pem_via_minijks(jks_path: &str, storepass: Option<&str>) -> anyhow::Result<String> {
@@ -82,6 +132,54 @@ pub(crate) fn jks_truststore_to_pem(jks_path: &str, storepass: Option<&str>) -> 
     // Fallback to native minimal parser
     jks_truststore_to_pem_native(jks_path, storepass)
 }
+
+/// Convert a classic PKCS#12 (.p12/.pfx) file into a PEM bundle (cert + chain).
+/// Returns a path to a temporary PEM file suitable for SSL usage.
+pub(crate) fn pkcs12_to_pem(p12_path: &str, password: Option<&str>) -> anyhow::Result<String> {
+    if !Path::new(p12_path).exists() {
+        return Err(anyhow::anyhow!("File not found: {}", p12_path));
+    }
+
+    // Strictly treat input as PKCS#12
+    let bytes = std::fs::read(p12_path)?;
+    let p12 = Pkcs12::from_der(&bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to read PKCS#12: {}", e))?;
+    let parsed = p12
+        .parse2(password.unwrap_or(""))
+        .map_err(|e| anyhow::anyhow!("Failed to parse PKCS#12: {}", e))?;
+
+    let mut tmp = tempfile::Builder::new().prefix("rkui-ca-").suffix(".pem").tempfile()?;
+
+    // End-entity certificate (if present)
+    let mut wrote_any = false;
+    if let Some(cert) = parsed.cert {
+        let pem = cert.to_pem()?;
+        tmp.write_all(&pem)?;
+        wrote_any = true;
+    }
+
+    // Chain certificates (if any)
+    if let Some(stack) = parsed.ca {
+        for i in 0..stack.len() {
+            let x = stack
+                .get(i)
+                .ok_or_else(|| anyhow::anyhow!("Invalid certificate stack index"))?;
+            let pem = x.to_pem()?;
+            tmp.write_all(&pem)?;
+            wrote_any = true;
+        }
+    }
+
+    if !wrote_any {
+        return Err(anyhow::anyhow!("PKCS#12 archive does not contain any certificates"));
+    }
+
+    let path = tmp.into_temp_path();
+    let path_str = path.to_string_lossy().to_string();
+    std::mem::forget(path);
+    Ok(path_str)
+}
+
 
 /// Minimal JKS reader: extracts DER certificates from trusted cert entries (type = 1).
 /// It does not validate the keystore SHA-1 integrity checksum and ignores private key entries.
@@ -199,11 +297,7 @@ fn parse_jks_trusted_certs(data: &[u8]) -> anyhow::Result<Vec<Vec<u8>>> {
     Ok(certs)
 }
 
-/// Convert a JKS keystore into a PKCS#12 file (not supported natively).
-/// Rationale: native .jks private key decryption is not implemented. Prefer providing a .p12/.pfx.
-pub(crate) fn jks_keystore_to_pkcs12_via_keytool(_jks_path: &str, _storepass: Option<&str>) -> anyhow::Result<String> {
-    Err(anyhow::anyhow!("Native .jks keystore conversion is not yet supported. Please provide a PKCS#12 (.p12/.pfx) keystore or omit keystore."))
-}
+
 
 /// Try to extract username and password from a JAAS-like config string.
 /// Accepts common variants like:

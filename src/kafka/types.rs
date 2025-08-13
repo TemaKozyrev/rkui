@@ -21,17 +21,25 @@ pub struct KafkaConfig {
     pub topic: String,
     // Legacy flag kept for backward compatibility with older UIs
     pub ssl_enabled: bool,
-    /// Optional advanced truststore/keystore settings (mostly for SASL SSL)
+    /// Optional advanced truststore/keystore settings (mostly for SASL SSL, Java-like mode)
     #[serde(rename = "truststore_location", alias = "truststoreLocation")]
     pub truststore_location: Option<String>,
     #[serde(rename = "truststore_password", alias = "truststorePassword")]
     pub truststore_password: Option<String>,
-    #[serde(rename = "keystore_location", alias = "keystoreLocation")]
-    pub keystore_location: Option<String>,
-    #[serde(rename = "keystore_password", alias = "keystorePassword")]
-    pub keystore_password: Option<String>,
-    #[serde(rename = "keystore_key_password", alias = "keystoreKeyPassword")]
-    pub keystore_key_password: Option<String>,
+    /// Optional selection of SSL mode when using SSL/SASL_SSL: "java_like" | "classic"
+    #[serde(rename = "ssl_mode", alias = "sslMode")]
+    pub ssl_mode: Option<String>,
+    /// Classic SSL fields (PEM/CRT files) - optional
+    #[serde(rename = "ssl_ca_root", alias = "sslCaRoot")]
+    pub ssl_ca_root: Option<String>,
+    #[serde(rename = "ssl_ca_sub", alias = "sslCaSub")]
+    pub ssl_ca_sub: Option<String>,
+    #[serde(rename = "ssl_certificate", alias = "sslCertificate")]
+    pub ssl_certificate: Option<String>,
+    #[serde(rename = "ssl_key", alias = "sslKey")]
+    pub ssl_key: Option<String>,
+    #[serde(rename = "ssl_key_password", alias = "sslKeyPassword")]
+    pub ssl_key_password: Option<String>,
     /// Optional security type sent by the UI: "plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"
     #[serde(rename = "security_type", alias = "securityType")]
     pub security_type: Option<String>,
@@ -72,9 +80,12 @@ impl Default for KafkaConfig {
             ssl_enabled: false,
             truststore_location: None,
             truststore_password: None,
-            keystore_location: None,
-            keystore_password: None,
-            keystore_key_password: None,
+            ssl_mode: None,
+            ssl_ca_root: None,
+            ssl_ca_sub: None,
+            ssl_certificate: None,
+            ssl_key: None,
+            ssl_key_password: None,
             security_type: None,
             sasl_mechanism: None,
             sasl_jaas_config: None,

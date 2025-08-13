@@ -1,7 +1,7 @@
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::BaseConsumer;
 
-use crate::utils::kafka::{configure_ssl, configure_sasl};
+use crate::utils::kafka::configure_security;
 use super::types::KafkaConfig;
 
 /// Build an rdkafka BaseConsumer configured according to KafkaConfig.
@@ -10,9 +10,6 @@ pub(crate) fn create_consumer(config: &KafkaConfig) -> anyhow::Result<BaseConsum
     cc.set("bootstrap.servers", &config.broker);
     // A default group id; for UI reading anything is fine. Could be made configurable later.
     cc.set("group.id", "rkui-consumer");
-    cc.set("enable.partition.eof", "false");
-    cc.set("enable.auto.commit", "true");
-    // cc.set("auto.offset.reset", "earliest");
 
     // Оптимизации для быстрого переназначения партиций
     cc.set("socket.timeout.ms", "10000");             // Уменьшаем таймаут сокета
@@ -40,34 +37,8 @@ pub(crate) fn create_consumer(config: &KafkaConfig) -> anyhow::Result<BaseConsum
     cc.set("reconnect.backoff.max.ms", "10000");    // Максимальное время между попытками
     cc.set("allow.auto.create.topics", "false");    // Отключаем автосоздание топиков
 
-
-    // Determine effective security type with backward compatibility
-    let sec_type = config
-        .security_type
-        .as_deref()
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_else(|| if config.ssl_enabled { "ssl".into() } else { "plaintext".into() });
-
-
-
-        match sec_type.as_str() {
-        "ssl" => {
-            cc.set("security.protocol", "ssl");
-            configure_ssl(&mut cc, config)?;
-        }
-        "sasl_plaintext" => {
-            cc.set("security.protocol", "sasl_plaintext");
-            configure_sasl(&mut cc, config);
-        }
-        "sasl_ssl" => {
-            cc.set("security.protocol", "sasl_ssl");
-            configure_ssl(&mut cc, config)?;
-            configure_sasl(&mut cc, config);
-        }
-        _ => {
-            // plaintext (default): no extra settings
-        }
-    }
+    // Полная настройка безопасности (PLAINTEXT/SSL/SASL*) вынесена в utils
+    configure_security(&mut cc, config)?;
 
     let consumer: BaseConsumer = cc.create()?;
     Ok(consumer)
