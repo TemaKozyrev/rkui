@@ -129,13 +129,15 @@ jobs:
 
       - name: Cache Rust (Linux)
         if: runner.os == 'Linux'
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
         with:
-          workspaces: |
-            . -> target
-          cache-targets: true
-          shared-key: ${{ runner.os }}-release
-          prefix-key: ${{ runner.os }}-
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-${{ matrix.rust_targets }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-
 
       - name: Setup Rust (macOS)
         if: runner.os == 'macOS'
@@ -145,13 +147,15 @@ jobs:
 
       - name: Cache Rust (macOS)
         if: runner.os == 'macOS'
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
         with:
-          workspaces: |
-            . -> target
-          cache-targets: true
-          shared-key: ${{ runner.os }}-release
-          prefix-key: ${{ runner.os }}-
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-${{ matrix.rust_targets }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-
 
       - name: Setup Rust (Windows)
         if: runner.os == 'Windows'
@@ -159,13 +163,15 @@ jobs:
 
       - name: Cache Rust (Windows)
         if: runner.os == 'Windows'
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
         with:
-          workspaces: |
-            . -> target
-          cache-targets: true
-          shared-key: ${{ runner.os }}-release
-          prefix-key: ${{ runner.os }}-
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-${{ matrix.rust_targets }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-
 
       - name: Prepare vcpkg (Windows)
         if: runner.os == 'Windows'
@@ -204,6 +210,7 @@ jobs:
         run: npm ci --prefix web
 
       - name: Build and upload with Tauri
+        if: runner.os != 'Windows'
         uses: tauri-apps/tauri-action@v0
         timeout-minutes: 60
         env:
@@ -218,6 +225,25 @@ jobs:
           ZLIB_ROOT: "C:\\vcpkg\\installed\\x64-windows-static-md"
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: "${{ matrix.tauri_args }} --verbose"
+          releaseDraft: false
+          prerelease: false
+
+      - name: Build with Tauri (Windows, no bundle)
+        if: runner.os == 'Windows'
+        uses: tauri-apps/tauri-action@v0
+        timeout-minutes: 60
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: 1
+          CARGO_INCREMENTAL: 0
+          VCPKG_ROOT: "C:\\vcpkg"
+          VCPKGRS_DYNAMIC: "0"
+          VCPKGRS_TRIPLET: "x64-windows-static-md"
+          CMAKE_PREFIX_PATH: "C:\\vcpkg\\installed\\x64-windows-static-md"
+          ZLIB_ROOT: "C:\\vcpkg\\installed\\x64-windows-static-md"
+        with:
           args: "${{ matrix.tauri_args }} --verbose"
           releaseDraft: false
           prerelease: false
