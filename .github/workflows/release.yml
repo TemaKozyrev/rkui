@@ -48,7 +48,7 @@ jobs:
             rust_targets: "x86_64-apple-darwin"
           - os: windows-latest
             label: windows-x64
-            tauri_args: "-b app"
+            tauri_args: "--no-bundle"
             rust_targets: ""
 
     steps:
@@ -221,3 +221,36 @@ jobs:
           args: "${{ matrix.tauri_args }} --verbose"
           releaseDraft: false
           prerelease: false
+
+      - name: Compute version (Windows)
+        if: runner.os == 'Windows'
+        id: win_version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v',''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Create versioned Windows exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.win_version.outputs.version }}"
+          $src = "target\release\rkui.exe"
+          $dst = "target\release\rkui-$version.exe"
+          if (Test-Path $src) {
+            Copy-Item $src $dst -Force
+            Write-Host "Created $dst"
+          } else {
+            Write-Error "Source exe not found at $src"
+            exit 1
+          }
+
+      - name: Upload Windows portable exe to Release
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/rkui-${{ steps.win_version.outputs.version }}.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
