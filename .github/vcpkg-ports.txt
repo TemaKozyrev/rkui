@@ -1,0 +1,4 @@
+librdkafka:x64-windows
+zlib:x64-windows
+zstd:x64-windows
+openssl:x64-windows

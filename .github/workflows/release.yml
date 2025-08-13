@@ -40,12 +40,16 @@ jobs:
             rust_targets: ""
           - os: macos-14
             label: macos-arm64
-            tauri_args: "--target aarch64-apple-darwin"
+            tauri_args: "--target aarch64-apple-darwin -b dmg"
             rust_targets: "aarch64-apple-darwin"
           - os: macos-13
             label: macos-x86_64
-            tauri_args: "--target x86_64-apple-darwin"
+            tauri_args: "--target x86_64-apple-darwin -b dmg"
             rust_targets: "x86_64-apple-darwin"
+          - os: windows-latest
+            label: windows-x64
+            tauri_args: "-b app"
+            rust_targets: ""
 
     steps:
       - name: Checkout
@@ -113,7 +117,6 @@ jobs:
             patchelf \
             pkg-config \
             libssl-dev \
-            libsasl2-dev \
             zlib1g-dev \
             libzstd-dev \
             librdkafka-dev \
@@ -124,11 +127,70 @@ jobs:
         if: runner.os == 'Linux'
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust (Linux)
+        if: runner.os == 'Linux'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-targets: true
+          shared-key: ${{ runner.os }}-release
+          prefix-key: ${{ runner.os }}-
+
       - name: Setup Rust (macOS)
         if: runner.os == 'macOS'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust (macOS)
+        if: runner.os == 'macOS'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-targets: true
+          shared-key: ${{ runner.os }}-release
+          prefix-key: ${{ runner.os }}-
+
+      - name: Setup Rust (Windows)
+        if: runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust (Windows)
+        if: runner.os == 'Windows'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-targets: true
+          shared-key: ${{ runner.os }}-release
+          prefix-key: ${{ runner.os }}-
+
+      - name: Prepare vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg C:\vcpkg
+          & C:\vcpkg\bootstrap-vcpkg.bat
+
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            C:\vcpkg\packages
+            C:\vcpkg\downloads
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('.github/vcpkg-ports.txt') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & C:\vcpkg\vcpkg.exe install librdkafka:x64-windows-static-md zlib:x64-windows-static-md zstd:x64-windows-static-md openssl:x64-windows-static-md
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -149,6 +211,11 @@ jobs:
           CARGO_TERM_COLOR: always
           RUST_BACKTRACE: 1
           CARGO_INCREMENTAL: 0
+          VCPKG_ROOT: "C:\\vcpkg"
+          VCPKGRS_DYNAMIC: "0"
+          VCPKGRS_TRIPLET: "x64-windows-static-md"
+          CMAKE_PREFIX_PATH: "C:\\vcpkg\\installed\\x64-windows-static-md"
+          ZLIB_ROOT: "C:\\vcpkg\\installed\\x64-windows-static-md"
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: "${{ matrix.tauri_args }} --verbose"
