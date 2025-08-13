@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useLayoutEffect, useRef } from "react";
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog, message as showDialog } from '@tauri-apps/plugin-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
@@ -9,15 +9,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Settings, Upload, FileText } from "lucide-react";
+import { createPortal } from "react-dom";
 
 interface ConfigurationData {
   name?: string; // UI-only: human-friendly name for saved configs
   broker: string;
   topic: string;
-  securityType: 'plaintext' | 'ssl' | 'sasl_plaintext';
-  sslCertPath?: string;
-  sslKeyPath?: string;
-  sslCaPath?: string;
+  securityType: 'plaintext' | 'ssl' | 'sasl_plaintext' | 'sasl_ssl';
+  // SASL/SSL advanced stores
+  truststoreLocation?: string;
+  truststorePassword?: string;
+  keystoreLocation?: string;
+  keystorePassword?: string;
+  keystoreKeyPassword?: string;
   saslMechanism?: string;
   saslJaasConfig?: string;
   messageType: 'json' | 'text' | 'protobuf';
@@ -52,12 +56,101 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
   const [isFetchingTopics, setIsFetchingTopics] = useState(false);
   const [topicsError, setTopicsError] = useState<string | null>(null);
   const [topicFocused, setTopicFocused] = useState(false);
+  const [topicDropdownPos, setTopicDropdownPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [topicDropdownHover, setTopicDropdownHover] = useState(false);
+  const [topicDropdownInteracting, setTopicDropdownInteracting] = useState(false);
+
+  const updateTopicDropdownPos = () => {
+    const el = document.getElementById('topic');
+    if (!el) { setTopicDropdownPos(null); return; }
+    const rect = el.getBoundingClientRect();
+    // Reduce the vertical gap to minimize the dead zone between input and dropdown
+    setTopicDropdownPos({ left: Math.round(rect.left), top: Math.round(rect.bottom + 2), width: Math.round(rect.width) });
+  };
+
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!topicFocused) return;
+    updateTopicDropdownPos();
+
+    const onResize = () => updateTopicDropdownPos();
+    const onScroll = (e: Event) => {
+      // Ignore scrolls originating from the dropdown itself to preserve its internal scroll position
+      const target = e.target as Node | null;
+      const dr = dropdownRef.current;
+      if (dr && target && (target === dr || dr.contains(target))) {
+        return;
+      }
+      updateTopicDropdownPos();
+    };
+
+    window.addEventListener('resize', onResize);
+    // Listen to all scrolls (window and nested containers) using capture to catch bubbling
+    document.addEventListener('scroll', onScroll, true);
+
+    const ro = new ResizeObserver(() => updateTopicDropdownPos());
+    const el = document.getElementById('topic');
+    if (el) ro.observe(el);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('scroll', onScroll, true);
+      ro.disconnect();
+    };
+  }, [topicFocused]);
 
   // Proto parsing UI state
   const [protoFiles, setProtoFiles] = useState<string[]>([]);
   const [isParsingProto, setIsParsingProto] = useState(false);
   const [parsedMessages, setParsedMessages] = useState<string[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
+
+  const handlePickTruststore = async () => {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        filters: [{ name: 'Truststore/CA', extensions: ['pem','crt','cer','bundle','jks','jceks','p12','pfx'] }]
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? (typeof selected[0] === 'string' ? selected[0] : null) : (typeof selected === 'string' ? selected : null);
+      if (!path) return;
+      try {
+            const internal: string = await invoke('import_app_file', { srcPath: path, kind: 'truststore' });
+            setConfig(prev => ({ ...prev, truststoreLocation: internal }));
+          } catch (err: any) {
+            console.error('Failed to import truststore into app', err);
+            await showDialog((err?.toString?.() || 'Failed to import truststore'), { title: 'Import Error', kind: 'error' });
+          }
+    } catch (e: any) {
+      console.error('Failed to pick truststore file', e);
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to open file dialog');
+      await showDialog(text, { title: 'Error', kind: 'error' });
+    }
+  };
+
+  const handlePickKeystore = async () => {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        filters: [{ name: 'Keystore', extensions: ['p12','pfx','jks','jceks'] }]
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? (typeof selected[0] === 'string' ? selected[0] : null) : (typeof selected === 'string' ? selected : null);
+      if (!path) return;
+      try {
+            const internal: string = await invoke('import_app_file', { srcPath: path, kind: 'keystore' });
+            setConfig(prev => ({ ...prev, keystoreLocation: internal }));
+          } catch (err: any) {
+            console.error('Failed to import keystore into app', err);
+            await showDialog((err?.toString?.() || 'Failed to import keystore'), { title: 'Import Error', kind: 'error' });
+          }
+    } catch (e: any) {
+      console.error('Failed to pick keystore file', e);
+      const text = typeof e === 'string' ? e : (e?.toString?.() || 'Failed to open file dialog');
+      await showDialog(text, { title: 'Error', kind: 'error' });
+    }
+  };
 
   const handlePickProtoFile = async () => {
     try {
@@ -71,11 +164,20 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
         return;
       }
       if (incoming.length === 0) return;
-      // Merge with already selected files and skip duplicates
+      // Import into app-managed storage and merge with existing
+      const imported = await Promise.all(
+        incoming.map(async (p) => {
+          try {
+            const internal: string = await invoke('import_app_file', { srcPath: p, kind: 'proto' });
+            return internal;
+          } catch (err: any) {
+            console.error('Failed to import proto file into app', p, err);
+            return p; // fallback to original path if import fails
+          }
+        })
+      );
       const mergedSet = new Set<string>(protoFiles);
-      for (const f of incoming) {
-        mergedSet.add(f);
-      }
+      for (const f of imported) { mergedSet.add(f); }
       const merged = Array.from(mergedSet);
       setProtoFiles(merged);
       setConfig(prev => {
@@ -206,11 +308,14 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
     broker: c.broker,
     topic: c.topic,
     // Backward compatibility flag for older backends; derive from securityType
-    ssl_enabled: c.securityType === 'ssl',
+    ssl_enabled: c.securityType === 'ssl' || c.securityType === 'sasl_ssl',
     security_type: c.securityType,
-    ssl_cert_path: c.sslCertPath || null,
-    ssl_key_path: c.sslKeyPath || null,
-    ssl_ca_path: c.sslCaPath || null,
+    // Advanced trust/keystore options (mainly for SASL SSL)
+    truststore_location: c.truststoreLocation || null,
+    truststore_password: c.truststorePassword || null,
+    keystore_location: c.keystoreLocation || null,
+    keystore_password: c.keystorePassword || null,
+    keystore_key_password: c.keystoreKeyPassword || null,
     sasl_mechanism: c.saslMechanism || null,
     sasl_jaas_config: c.saslJaasConfig || null,
     message_type: c.messageType,
@@ -327,10 +432,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
               
               <TabsContent value="connection" className="space-y-4">
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Broker Settings</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="pt-2 space-y-4">
                     <div>
                       <Label htmlFor="broker">Kafka Broker</Label>
                       <Input
@@ -355,35 +457,53 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                         id="topic"
                         value={config.topic}
                         onFocus={() => setTopicFocused(true)}
-                        onBlur={() => setTimeout(() => setTopicFocused(false), 100)}
+                        onBlur={() => setTimeout(() => {
+                          if (!topicDropdownHover && !topicDropdownInteracting) setTopicFocused(false);
+                        }, 250)}
                         onChange={(e) => setConfig(prev => ({ ...prev, topic: e.target.value }))}
                         placeholder="my-topic"
                         autoComplete="off"
                       />
-                      {(topicFocused && (isFetchingTopics || topicsError || topics.length > 0)) && (
-                        <div className="absolute z-50 mt-1 w-full max-h-60 overflow-auto rounded-md border bg-background shadow-md">
-                          {isFetchingTopics && (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">Loading topics…</div>
-                          )}
-                          {!isFetchingTopics && topicsError && (
-                            <div className="px-3 py-2 text-sm text-destructive">{topicsError}</div>
-                          )}
-                          {!isFetchingTopics && !topicsError && filteredTopics.map((t) => (
-                            <div
-                              key={t}
-                              className="px-3 py-2 cursor-pointer hover:bg-accent hover:text-accent-foreground text-sm"
-                              onMouseDown={() => {
-                                setConfig(prev => ({ ...prev, topic: t }));
-                                setTopicFocused(false);
-                              }}
-                            >
-                              {t}
-                            </div>
-                          ))}
-                          {!isFetchingTopics && !topicsError && filteredTopics.length === 0 && (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">No matching topics</div>
-                          )}
-                        </div>
+                      {(topicFocused && (isFetchingTopics || topicsError || topics.length > 0)) && topicDropdownPos && (
+                        createPortal(
+                          <div
+                            ref={dropdownRef}
+                            onMouseEnter={() => setTopicDropdownHover(true)}
+                            onMouseLeave={() => setTopicDropdownHover(false)}
+                            onMouseDown={() => setTopicDropdownInteracting(true)}
+                            onMouseUp={() => setTimeout(() => setTopicDropdownInteracting(false), 0)}
+                            onPointerDown={() => setTopicDropdownInteracting(true)}
+                            onPointerUp={() => setTimeout(() => setTopicDropdownInteracting(false), 0)}
+                            onWheelCapture={(e) => { e.stopPropagation(); }}
+                            onWheel={(e) => { e.stopPropagation(); }}
+                            onTouchMove={(e) => { e.stopPropagation(); }}
+                            style={{ position: 'fixed', left: topicDropdownPos.left, top: topicDropdownPos.top, width: topicDropdownPos.width, zIndex: 1000, maxHeight: 240, overflowY: 'auto', pointerEvents: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' as any, touchAction: 'pan-y' as any }}
+                            className="rounded-md border bg-background shadow-md"
+                          >
+                            {isFetchingTopics && (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">Loading topics…</div>
+                            )}
+                            {!isFetchingTopics && topicsError && (
+                              <div className="px-3 py-2 text-sm text-destructive">{topicsError}</div>
+                            )}
+                            {!isFetchingTopics && !topicsError && filteredTopics.map((t) => (
+                              <div
+                                key={t}
+                                className="px-3 py-2 cursor-pointer hover:bg-accent hover:text-accent-foreground text-sm"
+                                onMouseDown={() => {
+                                  setConfig(prev => ({ ...prev, topic: t }));
+                                  setTopicFocused(false);
+                                }}
+                              >
+                                {t}
+                              </div>
+                            ))}
+                            {!isFetchingTopics && !topicsError && filteredTopics.length === 0 && (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">No matching topics</div>
+                            )}
+                          </div>,
+                          document.body
+                        )
                       )}
                     </div>
                   </CardContent>
@@ -392,19 +512,16 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
               
               <TabsContent value="security" className="space-y-4">
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Security</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="pt-2 space-y-4">
                     <div>
                       <Label htmlFor="security-type">Type</Label>
                       <Select
                         value={config.securityType}
-                        onValueChange={(value: 'plaintext' | 'ssl' | 'sasl_plaintext') =>
+                        onValueChange={(value: 'plaintext' | 'ssl' | 'sasl_plaintext' | 'sasl_ssl') =>
                           setConfig(prev => ({
                             ...prev,
                             securityType: value,
-                            ...(value === 'sasl_plaintext' && (!prev.saslMechanism || prev.saslMechanism.trim() === '')
+                            ...(((value === 'sasl_plaintext' || value === 'sasl_ssl') && (!prev.saslMechanism || prev.saslMechanism.trim() === ''))
                               ? { saslMechanism: 'SCRAM-SHA-512' }
                               : {})
                           }))
@@ -417,43 +534,90 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
                           <SelectItem value="plaintext">Plaintext</SelectItem>
                           <SelectItem value="ssl">SSL</SelectItem>
                           <SelectItem value="sasl_plaintext">SASL Plaintext</SelectItem>
+                          <SelectItem value="sasl_ssl">SASL SSL</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
-                    {config.securityType === 'ssl' && (
+                    {(config.securityType === 'ssl' || config.securityType === 'sasl_ssl') && (
                       <>
-                        <div>
-                          <Label htmlFor="ssl-cert">Certificate Path</Label>
-                          <Input
-                            id="ssl-cert"
-                            value={config.sslCertPath || ''}
-                            onChange={(e) => setConfig(prev => ({ ...prev, sslCertPath: e.target.value }))}
-                            placeholder="/path/to/client.crt"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="ssl-key">Key Path</Label>
-                          <Input
-                            id="ssl-key"
-                            value={config.sslKeyPath || ''}
-                            onChange={(e) => setConfig(prev => ({ ...prev, sslKeyPath: e.target.value }))}
-                            placeholder="/path/to/client.key"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="ssl-ca">CA Certificate Path</Label>
-                          <Input
-                            id="ssl-ca"
-                            value={config.sslCaPath || ''}
-                            onChange={(e) => setConfig(prev => ({ ...prev, sslCaPath: e.target.value }))}
-                            placeholder="/path/to/ca.crt"
-                          />
-                        </div>
+
+                        {config.securityType === 'sasl_ssl' && (
+                          <>
+                            <div className="pt-2">
+                              <Label>Truststore File</Label>
+                              <div className="flex items-center gap-2">
+                                <Button variant="outline" onClick={handlePickTruststore} className="gap-2">
+                                  <Upload className="h-4 w-4" />
+                                  Select truststore/CA
+                                </Button>
+                                {config.truststoreLocation && (
+                                  <Button variant="ghost" size="sm" onClick={() => setConfig(prev => ({ ...prev, truststoreLocation: undefined }))}>
+                                    Clear
+                                  </Button>
+                                )}
+                              </div>
+                              {config.truststoreLocation && (
+                                <div className="mt-1 text-xs text-muted-foreground break-all" title={config.truststoreLocation}>
+                                  {config.truststoreLocation}
+                                </div>
+                              )}
+                            </div>
+                            <div>
+                              <Label htmlFor="truststore-password">Truststore Password</Label>
+                              <Input
+                                id="truststore-password"
+                                type="password"
+                                value={config.truststorePassword || ''}
+                                onChange={(e) => setConfig(prev => ({ ...prev, truststorePassword: e.target.value }))}
+                                placeholder="optional"
+                              />
+                            </div>
+                            <div>
+                              <Label>Keystore File</Label>
+                              <div className="flex items-center gap-2">
+                                <Button variant="outline" onClick={handlePickKeystore} className="gap-2">
+                                  <Upload className="h-4 w-4" />
+                                  Select keystore
+                                </Button>
+                                {config.keystoreLocation && (
+                                  <Button variant="ghost" size="sm" onClick={() => setConfig(prev => ({ ...prev, keystoreLocation: undefined }))}>
+                                    Clear
+                                  </Button>
+                                )}
+                              </div>
+                              {config.keystoreLocation && (
+                                <div className="mt-1 text-xs text-muted-foreground break-all" title={config.keystoreLocation}>
+                                  {config.keystoreLocation}
+                                </div>
+                              )}
+                            </div>
+                            <div>
+                              <Label htmlFor="keystore-password">Keystore Password</Label>
+                              <Input
+                                id="keystore-password"
+                                type="password"
+                                value={config.keystorePassword || ''}
+                                onChange={(e) => setConfig(prev => ({ ...prev, keystorePassword: e.target.value }))}
+                                placeholder="password for .p12/.pfx"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="keystore-key-password">Keystore Private Key Password</Label>
+                              <Input
+                                id="keystore-key-password"
+                                type="password"
+                                value={config.keystoreKeyPassword || ''}
+                                onChange={(e) => setConfig(prev => ({ ...prev, keystoreKeyPassword: e.target.value }))}
+                                placeholder="private key password if set"
+                              />
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
 
-                    {config.securityType === 'sasl_plaintext' && (
+                    {(config.securityType === 'sasl_plaintext' || config.securityType === 'sasl_ssl') && (
                       <>
                         <div>
                           <Label htmlFor="sasl-mechanism">SASL Mechanism</Label>
@@ -482,10 +646,7 @@ export function ConfigurationModal({ onConfigurationSave }: ConfigurationModalPr
               
               <TabsContent value="messages" className="space-y-4">
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Message Format</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="pt-2 space-y-4">
                     <div>
                       <Label htmlFor="message-type">Message Type</Label>
                       <Select

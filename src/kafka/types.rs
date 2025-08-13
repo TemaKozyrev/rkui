@@ -21,10 +21,18 @@ pub struct KafkaConfig {
     pub topic: String,
     // Legacy flag kept for backward compatibility with older UIs
     pub ssl_enabled: bool,
-    pub ssl_cert_path: Option<String>,
-    pub ssl_key_path: Option<String>,
-    pub ssl_ca_path: Option<String>,
-    /// Optional security type sent by the UI: "plaintext" | "ssl" | "sasl_plaintext"
+    /// Optional advanced truststore/keystore settings (mostly for SASL SSL)
+    #[serde(rename = "truststore_location", alias = "truststoreLocation")]
+    pub truststore_location: Option<String>,
+    #[serde(rename = "truststore_password", alias = "truststorePassword")]
+    pub truststore_password: Option<String>,
+    #[serde(rename = "keystore_location", alias = "keystoreLocation")]
+    pub keystore_location: Option<String>,
+    #[serde(rename = "keystore_password", alias = "keystorePassword")]
+    pub keystore_password: Option<String>,
+    #[serde(rename = "keystore_key_password", alias = "keystoreKeyPassword")]
+    pub keystore_key_password: Option<String>,
+    /// Optional security type sent by the UI: "plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"
     #[serde(rename = "security_type", alias = "securityType")]
     pub security_type: Option<String>,
     /// Optional SASL mechanism (e.g., PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
@@ -62,9 +70,11 @@ impl Default for KafkaConfig {
             broker: "localhost:9092".into(),
             topic: "".into(),
             ssl_enabled: false,
-            ssl_cert_path: None,
-            ssl_key_path: None,
-            ssl_ca_path: None,
+            truststore_location: None,
+            truststore_password: None,
+            keystore_location: None,
+            keystore_password: None,
+            keystore_key_password: None,
             security_type: None,
             sasl_mechanism: None,
             sasl_jaas_config: None,

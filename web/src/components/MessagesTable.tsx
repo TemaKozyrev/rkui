@@ -23,6 +23,7 @@ interface MessagesTableProps {
 
 export function MessagesTable({ messages, onMessageClick, loading = false }: MessagesTableProps) {
   const showLoader = loading && messages.length === 0;
+  const showEmpty = !loading && messages.length === 0;
 
   return (
     <Card className="flex-1">
@@ -41,6 +42,10 @@ export function MessagesTable({ messages, onMessageClick, loading = false }: Mes
               <Loader2 className="h-8 w-8 animate-spin" />
               <span className="text-sm">Loading messages...</span>
             </div>
+          </div>
+        ) : showEmpty ? (
+          <div className="h-64 flex items-center justify-center">
+            <div className="text-sm text-muted-foreground">No messages</div>
           </div>
         ) : (
           <div className="border rounded-md">

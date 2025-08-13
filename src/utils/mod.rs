@@ -1,3 +1,5 @@
+pub mod kafka;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

@@ -24,6 +24,7 @@ fn main() {
             kafka_adapter::start_filtered_load,
             kafka_adapter::cancel_filtered_load,
             proto_decoder::parse_proto_metadata,
+            kafka_adapter::import_app_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

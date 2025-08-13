@@ -83,18 +83,24 @@ impl Kafka {
             t.partitions().iter().map(|p| p.id()).collect()
         };
 
-        // Snapshot end offsets (high watermarks) before we start reading
+        // Snapshot low/high watermarks and pre-mark empty partitions as done
         {
             let mut ends = self
                 .end_offsets
                 .lock()
                 .map_err(|e| anyhow::anyhow!("State lock poisoned (end_offsets): {e}"))?;
             ends.clear();
+            let mut done = self
+                .done_partitions
+                .lock()
+                .map_err(|e| anyhow::anyhow!("State lock poisoned (done_partitions): {e}"))?;
+            done.clear();
             for p in &partitions {
-                let (_low, high) = self
+                let (low, high) = self
                     .consumer
                     .fetch_watermarks(topic, *p, Duration::from_secs(5))?;
                 ends.insert(*p, high);
+                if low >= high { done.insert(*p); }
             }
         }
         // store partitions

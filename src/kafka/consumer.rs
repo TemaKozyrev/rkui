@@ -1,7 +1,7 @@
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::BaseConsumer;
 
-use super::security::parse_username_password_from_jaas;
+use crate::utils::kafka::{configure_ssl, configure_sasl};
 use super::types::KafkaConfig;
 
 /// Build an rdkafka BaseConsumer configured according to KafkaConfig.
@@ -48,36 +48,21 @@ pub(crate) fn create_consumer(config: &KafkaConfig) -> anyhow::Result<BaseConsum
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_else(|| if config.ssl_enabled { "ssl".into() } else { "plaintext".into() });
 
-    match sec_type.as_str() {
+
+
+        match sec_type.as_str() {
         "ssl" => {
             cc.set("security.protocol", "ssl");
-            if let Some(path) = &config.ssl_ca_path {
-                cc.set("ssl.ca.location", path);
-            }
-            if let Some(path) = &config.ssl_cert_path {
-                cc.set("ssl.certificate.location", path);
-            }
-            if let Some(path) = &config.ssl_key_path {
-                cc.set("ssl.key.location", path);
-            }
+            configure_ssl(&mut cc, config)?;
         }
         "sasl_plaintext" => {
             cc.set("security.protocol", "sasl_plaintext");
-            // Use provided mechanism or default to SCRAM-SHA-512
-            let mech = config
-                .sasl_mechanism
-                .as_deref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .unwrap_or("SCRAM-SHA-512");
-            cc.set("sasl.mechanism", mech);
-            // Prefer explicit username/password parsed from JAAS config string
-            if let Some(jaas) = &config.sasl_jaas_config {
-                if let Some((user, pass)) = parse_username_password_from_jaas(jaas) {
-                    cc.set("sasl.username", &user);
-                    cc.set("sasl.password", &pass);
-                }
-            }
+            configure_sasl(&mut cc, config);
+        }
+        "sasl_ssl" => {
+            cc.set("security.protocol", "sasl_ssl");
+            configure_ssl(&mut cc, config)?;
+            configure_sasl(&mut cc, config);
         }
         _ => {
             // plaintext (default): no extra settings

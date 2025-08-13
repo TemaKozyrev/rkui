@@ -1,7 +1,7 @@
 mod decoder;
 pub mod reader;
 pub mod types;
-mod security;
+pub(crate) mod security;
 mod consumer;
 mod service;
 mod assignment;

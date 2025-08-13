@@ -1,4 +1,4 @@
-use tauri::{State, Window, Emitter};
+use tauri::{State, Window, Emitter, AppHandle};
 use serde::{Deserialize, Serialize};
 use rdkafka::consumer::Consumer;
 
@@ -378,4 +378,41 @@ pub async fn cancel_filtered_load(state: State<'_, AppState>) -> Result<(), Stri
         let _ = s.cancel_tx.send(());
     }
     Ok(())
+}
+
+/// Copy a selected file into an application-managed directory and return its new path.
+/// kind can be one of: "truststore", "keystore", "proto" (used for namespacing), or any string.
+#[tauri::command]
+pub async fn import_app_file(_app: AppHandle, src_path: String, kind: Option<String>) -> Result<String, String> {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    let src = Path::new(&src_path);
+    if !src.exists() {
+        return Err(format!("Source file does not exist: {}", src_path));
+    }
+
+    // Destination root: OS temp dir + rkui_uploads
+    let mut dest_root: PathBuf = std::env::temp_dir();
+    dest_root.push("rkui_uploads");
+    let ns = kind.unwrap_or_else(|| "misc".to_string());
+    dest_root.push(ns);
+
+    // Ensure destination directory exists
+    if let Err(e) = fs::create_dir_all(&dest_root) {
+        return Err(format!("Failed to create upload directory: {}", e));
+    }
+
+    // Determine a unique destination filename
+    let orig_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+    let ts = chrono::Utc::now().format("%Y%m%d%H%M%S%3f");
+    let dest_name = format!("{}_{}", ts, orig_name);
+    let dest_path = dest_root.join(dest_name);
+
+    // Copy the file
+    if let Err(e) = fs::copy(&src, &dest_path) {
+        return Err(format!("Failed to copy file: {}", e));
+    }
+
+    Ok(dest_path.to_string_lossy().to_string())
 }

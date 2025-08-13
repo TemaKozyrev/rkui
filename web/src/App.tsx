@@ -88,11 +88,14 @@ export default function App() {
     const payload = {
       broker: config.broker,
       topic: config.topic,
-      ssl_enabled: config.securityType === 'ssl',
+      ssl_enabled: config.securityType === 'ssl' || config.securityType === 'sasl_ssl',
       security_type: config.securityType || 'plaintext',
-      ssl_cert_path: config.sslCertPath || null,
-      ssl_key_path: config.sslKeyPath || null,
-      ssl_ca_path: config.sslCaPath || null,
+      // Advanced trust/keystore options (mainly for SASL SSL)
+      truststore_location: config.truststoreLocation || null,
+      truststore_password: config.truststorePassword || null,
+      keystore_location: config.keystoreLocation || null,
+      keystore_password: config.keystorePassword || null,
+      keystore_key_password: config.keystoreKeyPassword || null,
       sasl_mechanism: config.saslMechanism || null,
       sasl_jaas_config: config.saslJaasConfig || null,
       message_type: config.messageType,

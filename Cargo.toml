@@ -19,6 +19,9 @@ protobuf-json-mapping = "3"
 tauri-plugin-dialog = "2"
 protobuf-parse = "3"
 once_cell = "1"
+tempfile = "3"
+base64 = "0.22"
+minijks = { version = "0.1" }
 
 [features]
 default = []

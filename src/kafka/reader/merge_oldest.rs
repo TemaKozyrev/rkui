@@ -38,7 +38,7 @@ pub fn consume_merge_oldest(
         drop(bufs);
         if !need { break; }
         if idle_loops >= 20 { break; }
-        match kafka.consumer.as_ref().poll(Duration::from_millis(20000)) {
+        match kafka.consumer.as_ref().poll(Duration::from_millis(200)) {
             Some(Ok(m)) => {
                 let partition = m.partition();
                 let offset = m.offset();
